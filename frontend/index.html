@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>typeFree</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-light.min.css">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            md: {
+              surface: '#FFFFFF', /* Pure white for the paper look */
+              onSurface: '#1D1B20',
+              surfaceVariant: '#F4EFF4',
+              onSurfaceVariant: '#49454F',
+              primary: '#6750A4',
+              onPrimary: '#FFFFFF',
+              primaryContainer: '#EADDFF',
+              onPrimaryContainer: '#21005D',
+              outline: '#79747E',
+            }
+          },
+        }
+      }
+    }
+  </script>
+  <style>
+    /* Custom scrollbar for a cleaner look */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #CAC4D0; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #79747E; }
+    
+    /* Specific class to hide scrollbars for block editors */
+    .hide-scrollbar { scrollbar-width: none; }
+    .hide-scrollbar::-webkit-scrollbar { display: none; }
+
+    /* Override highlight.js background to blend with our custom gray block background */
+    .hljs { background: transparent !important; padding: 0 !important; }
+
+    /* Markdown Render Styles - Stripped of margins/backgrounds so the Block wrapper controls layout */
+    .md-render > *:first-child { margin-top: 0; }
+    .md-render > *:last-child { margin-bottom: 0; }
+    .md-render h1 { font-size: 2.25rem; font-weight: 700; line-height: 1.4; margin: 0; }
+    .md-render h2 { font-size: 1.875rem; font-weight: 600; line-height: 1.4; margin: 0; }
+    .md-render h3 { font-size: 1.5rem; font-weight: 600; line-height: 1.4; margin: 0; }
+    .md-render p { margin: 0; line-height: 1.7; }
+    .md-render ul { list-style-type: disc; padding-left: 1.5em; margin: 0; }
+    .md-render ol { list-style-type: decimal; padding-left: 1.5em; margin: 0; }
+    .md-render li { margin: 0; }
+    .md-render pre, .md-render pre code, .md-render code { white-space: pre !important; word-break: normal !important; overflow-wrap: normal !important; width: fit-content; min-width: 100%; display: block; }
+    .md-render p code { display: inline; width: auto; min-width: 0; white-space: normal !important; } /* Restore inline code behavior */
+    .md-render code { background-color: #E7E0EC; padding: 0.2em 0.4em; border-radius: 0.25rem; font-family: monospace; font-size: 0.875em; color: #49454F; }
+    .md-render pre code { background-color: transparent; padding: 0; color: inherit; }
+    .md-render blockquote { border: none; padding: 0; margin: 0; background: transparent; font-style: inherit; color: inherit; }
+    .md-render a { color: #6750A4; text-decoration: none; position: relative; z-index: 20; }
+    .md-render a:hover { text-decoration: underline; }
+    .md-render hr { border: 0; border-top: 1px solid #E7E0EC; margin: 2em 0; }
+    .md-render img { max-width: 100%; height: auto; border-radius: 0.5rem; margin: 1em 0; }
+    .md-render table { width: 100%; border-collapse: collapse; margin: 1em 0; }
+    .md-render th, .md-render td { border: 1px solid #E7E0EC; padding: 0.5em 1em; text-align: left; }
+    .md-render th { background-color: #F4EFF4; font-weight: 600; }
+    /* Ensure textarea and syntax div are perfectly aligned */
+    textarea, .syntax-layer {
+      -webkit-font-smoothing: antialiased;
+      margin: 0 !important;
+      border: none !important;
+      outline: none !important;
+      box-sizing: border-box !important;
+    }
+    .font-mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+    }
+  </style>
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$', '$$'], ['\\[', '\\]']],
+        processEscapes: true,
+        formatError: (jax, err) => { return 'ERR:' + err.message; }
+      },
+      options: {
+        skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+      },
+      startup: {
+        typeset: false
+      }
+    };
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-chtml.min.js" id="MathJax-script" async></script>
+  </head>
+<body class="bg-md-surface text-md-onSurface antialiased selection:bg-md-primaryContainer selection:text-md-onPrimaryContainer">
+  <div id="root"></div>
+  <script type="module" src="./index.tsx"></script>
+</body>
+</html>
