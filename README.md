@@ -14,21 +14,21 @@ A Typora-like rich text editor built with React. The editor keeps Markdown as th
 ### Prerequisites
 
 - Node.js (v18 or later recommended)
-- npm
+- pnpm
 
 ### Installation
 
 1. Clone the repository.
-2. Install root dependencies:
+2. Install dependencies:
    ```bash
-   npm install
+   pnpm install
    ```
 
 ### Running the App
 
 Start the development server:
 ```bash
-npm run dev
+pnpm run dev
 ```
 
 The app will be available at `http://localhost:5173` (default Vite port).
@@ -39,3 +39,18 @@ The app will be available at `http://localhost:5173` (default Vite port).
 - `frontend/App.tsx`: editor state, block transitions, and mode switching.
 - `frontend/components/Block.tsx`: per-block editing and rendered preview.
 - `frontend/utils.ts`: block parsing, Markdown helpers, and syntax highlighting.
+
+## Custom Fonts
+
+The app now defaults to a Google Sans font stack through the global `font-sans` definition.
+
+The extension point is `frontend/public/fonts/custom-fonts.css`.
+
+To bundle Google Sans with the app:
+
+1. Put your font files under `frontend/public/fonts/`.
+2. Uncomment the sample `@font-face` rules in `frontend/public/fonts/custom-fonts.css`.
+
+To switch to another bundled font, update `--typefree-custom-font-sans` in that file and point the `@font-face` declarations at your font assets.
+
+If no bundled font files are configured, the app will try locally installed `Google Sans` or `Product Sans` before falling back to the system sans-serif stack.

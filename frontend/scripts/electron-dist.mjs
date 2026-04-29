@@ -1,0 +1,36 @@
+import { spawn } from 'node:child_process';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const rootDir = resolve(__dirname, '..');
+
+const resolveBin = (name) => resolve(
+  rootDir,
+  'node_modules',
+  '.bin',
+  process.platform === 'win32' ? `${name}.cmd` : name
+);
+
+const viteBin = resolveBin('vite');
+const builderBin = resolveBin('electron-builder');
+
+const run = (command, args) => new Promise((resolvePromise, reject) => {
+  const child = spawn(command, args, {
+    cwd: rootDir,
+    stdio: 'inherit',
+    env: process.env,
+  });
+
+  child.on('exit', (code) => {
+    if (code === 0) {
+      resolvePromise(undefined);
+      return;
+    }
+
+    reject(new Error(`${command} exited with code ${code ?? 1}`));
+  });
+});
+
+await run(viteBin, ['build']);
+await run(builderBin, []);

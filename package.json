@@ -1,8 +1,12 @@
 {
   "name": "typefree",
   "scripts": {
-    "dev": "npm run dev --prefix frontend",
-    "build": "npm run build --prefix frontend",
-    "preview": "npm run preview --prefix frontend"
+    "dev": "pnpm --dir frontend run dev:web",
+    "dev:web": "pnpm --dir frontend run dev:web",
+    "dev:desktop": "pnpm --dir frontend run dev:desktop",
+    "build": "pnpm --dir frontend run build:web",
+    "build:web": "pnpm --dir frontend run build:web",
+    "dist:desktop": "pnpm --dir frontend run dist",
+    "preview": "pnpm --dir frontend run preview"
   }
 }
