@@ -528,6 +528,8 @@ export const Block = ({
   const revealTransitionClass = transitionMode === 'smooth'
     ? 'transition-[grid-template-rows,opacity,transform,padding,border-color,max-height,margin] duration-240 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none'
     : '';
+  const renderLayerLayoutClass = isActive ? 'absolute inset-0' : 'relative';
+  const editLayerLayoutClass = isActive ? 'relative' : 'absolute inset-0';
 
   let wrapperClass = `relative w-full py-1 my-1 ${shellTransitionClass}`;
   if (isCodeBlock || isMathBlock) {
@@ -632,9 +634,9 @@ export const Block = ({
   return (
     <div className={wrapperClass} onClick={handleActivateWithPosition}>
       <div className="relative block-relative">
-        <div className="grid grid-cols-1 grid-rows-1">
+        <div className="relative min-h-[1.5rem]">
           {/* Render Layer Container */}
-          <div className={`col-start-1 row-start-1 ${layerTransitionClass} ${!isActive ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-1 pointer-events-none'}`}>
+          <div className={`${renderLayerLayoutClass} ${layerTransitionClass} ${!isActive ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-1 pointer-events-none'}`}>
             <div className="overflow-hidden min-h-0">
               <div ref={renderRef} className="md-render min-h-[1.5rem] cursor-text">
                 {tokens.map((token: any, i: number) => renderToken(token, i))}
@@ -643,7 +645,7 @@ export const Block = ({
           </div>
 
           {/* Edit Layer Container - pointer-events-none when inactive prevents the z-10 textarea from intercepting clicks meant for the render layer */}
-          <div className={`col-start-1 row-start-1 ${layerTransitionClass} ${isActive ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1 pointer-events-none'}`}>
+          <div className={`${editLayerLayoutClass} ${layerTransitionClass} ${isActive ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1 pointer-events-none'}`}>
             <div className="overflow-hidden min-h-0">
               <div className="relative edit-layer-relative w-full min-h-[1.5rem]">
                 <div 

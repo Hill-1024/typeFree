@@ -214,13 +214,16 @@ const resolveCodeLanguage = (lang?: string) => {
 export const getCodeBlockPreview = (raw: string, lang?: string) => {
   const fenceInfo = getCodeFenceInfo(raw);
   const content = fenceInfo?.content ?? getVisibleText({ text: raw });
+  const normalizedContent = fenceInfo && content.endsWith('\n')
+    ? content.slice(0, -1)
+    : content;
   const language = resolveCodeLanguage(lang);
-  const highlightedLines = content.split('\n').map((line) => (
+  const highlightedLines = normalizedContent.split('\n').map((line) => (
     line ? hljs.highlight(line, { language }).value : ''
   ));
 
   return {
-    content,
+    content: normalizedContent,
     contentStart: fenceInfo?.contentStart ?? 0,
     contentEnd: fenceInfo?.contentEnd ?? raw.length,
     highlightedLines,
@@ -421,7 +424,9 @@ export const rawToBlocks = (raw: string, prevBlocks: BlockData[] = []): BlockDat
   let currentBlockLines: string[] = [];
   let isInsideCode = false;
   let codeFence = '';
+  const topLevelListItemPattern = /^(?:[-*+]|\d+\.)\s+/;
 
+  const isTopLevelListItemStart = (line: string) => topLevelListItemPattern.test(line);
   const pushCurrent = (trailingText: string) => {
     if (currentBlockLines.length === 0 && trailingText === '') return;
     const rawText = currentBlockLines.join('\n');
@@ -460,6 +465,14 @@ export const rawToBlocks = (raw: string, prevBlocks: BlockData[] = []): BlockDat
     }
 
     if (isInsideCode) {
+      currentBlockLines.push(line);
+      continue;
+    }
+
+    if (isTopLevelListItemStart(line)) {
+      if (currentBlockLines.length > 0) {
+        pushCurrent('\n');
+      }
       currentBlockLines.push(line);
       continue;
     }

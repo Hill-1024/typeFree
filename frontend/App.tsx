@@ -116,11 +116,13 @@ export default function App() {
   const sourceEditorRef = useRef<HTMLTextAreaElement>(null);
   const sourceScrollContainerRef = useRef<HTMLDivElement>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const editorContainerRef = useRef<HTMLDivElement>(null);
   const syncRef = useRef<{ blockId: string | null; offset: number }>({ blockId: null, offset: 0 });
   const sourceSelectionRef = useRef(0);
   const browserFileHandleRef = useRef<any>(null);
   const modeRef = useRef<ViewMode>('wysiwyg');
   const titleSelectOnFocusRef = useRef(false);
+  const pendingBlockSelectAllRef = useRef<{ blockId: string | null; timestamp: number }>({ blockId: null, timestamp: 0 });
 
   const blocksRef = useRef<BlockData[]>([]);
   const blocks = useMemo(() => {
@@ -586,12 +588,55 @@ export default function App() {
     replaceRawRange(start, end, newRaw);
   }, [blocks, getBlockRange, replaceRawRange]);
 
+  const selectWholeDocumentInWysiwyg = useCallback(() => {
+    setActiveBlockId(null);
+    setFocusInstruction(null);
+    syncRef.current = { blockId: null, offset: 0 };
+
+    requestAnimationFrame(() => {
+      const container = editorContainerRef.current;
+      const selection = window.getSelection();
+      if (!container || !selection) {
+        return;
+      }
+
+      const blockNodes = Array.from(container.querySelectorAll('[data-block-id]'));
+      if (blockNodes.length === 0) {
+        return;
+      }
+
+      const range = document.createRange();
+      range.setStartBefore(blockNodes[0]);
+      range.setEndAfter(blockNodes[blockNodes.length - 1]);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+  }, []);
+
   const handleBlockKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>, index: number) => {
     const currentBlock = blocks[index];
     const target = e.target as HTMLTextAreaElement;
     const cursorPosition = target.selectionStart;
     const hasSelection = target.selectionStart !== target.selectionEnd;
     const { start: blockStart, end: blockEnd, trailingEnd } = getBlockRange(index);
+    const isSelectAllShortcut = (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'a';
+
+    if (isSelectAllShortcut) {
+      const now = Date.now();
+      const isCurrentBlockFullySelected = target.selectionStart === 0 && target.selectionEnd === currentBlock.raw.length;
+      const pendingSelectAll = pendingBlockSelectAllRef.current;
+      const shouldSelectWholeDocument = isCurrentBlockFullySelected &&
+        pendingSelectAll.blockId === currentBlock.id &&
+        now - pendingSelectAll.timestamp <= 700;
+
+      pendingBlockSelectAllRef.current = { blockId: currentBlock.id, timestamp: now };
+
+      if (shouldSelectWholeDocument) {
+        e.preventDefault();
+        selectWholeDocumentInWysiwyg();
+      }
+      return;
+    }
 
     if (e.key === 'Enter') {
       const isShift = e.shiftKey;
@@ -830,7 +875,7 @@ export default function App() {
         setFocusInstruction({ id: blocks[index + 1].id, type: 'start', _ts: Date.now() });
       }
     }
-  }, [blocks, enterMode, getBlockRange, handleBlockChange, replaceRawRange]);
+  }, [blocks, enterMode, getBlockRange, handleBlockChange, replaceRawRange, selectWholeDocumentInWysiwyg]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -1241,6 +1286,7 @@ export default function App() {
             onClick={handleContainerClick}
           >
             <div 
+              ref={editorContainerRef}
               className="w-full max-w-5xl mx-auto px-6 pt-8 flex flex-col min-h-full editor-container"
               onClick={handleContainerClick}
             >
