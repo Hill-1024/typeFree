@@ -21,6 +21,8 @@ const run = (command, args) => new Promise((resolvePromise, reject) => {
     cwd: rootDir,
     stdio: 'inherit',
     env: process.env,
+    // Windows package manager shims are .cmd files and must run via a shell.
+    shell: process.platform === 'win32',
   });
 
   child.on('exit', (code) => {
