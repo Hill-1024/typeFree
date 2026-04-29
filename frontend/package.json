@@ -54,6 +54,7 @@
       "package.json"
     ],
     "mac": {
+      "artifactName": "TypeFree_${version}_macOS_${arch}.${ext}",
       "icon": "build/icon.icns",
       "category": "public.app-category.productivity",
       "target": [
@@ -62,6 +63,7 @@
       ]
     },
     "win": {
+      "artifactName": "TypeFree_${version}_Windows_${arch}.${ext}",
       "icon": "build/icon.ico",
       "target": [
         "nsis",
@@ -69,6 +71,7 @@
       ]
     },
     "linux": {
+      "artifactName": "TypeFree_${version}_Linux_${arch}.${ext}",
       "icon": "build/icon.png",
       "category": "Office",
       "target": [
