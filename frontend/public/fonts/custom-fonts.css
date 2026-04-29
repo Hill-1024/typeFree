@@ -1,0 +1,42 @@
+/*
+  Optional bundled font entrypoint.
+
+  By default the app uses:
+  --typefree-custom-font-sans -> "Google Sans"
+
+  To bundle Google Sans with the app, add matching font files in this folder and
+  uncomment the @font-face rules below.
+
+  To switch to another bundled font, change the CSS variable to your family name
+  and add corresponding @font-face declarations.
+*/
+
+/*
+@font-face {
+  font-family: "Google Sans";
+  src: url("/fonts/GoogleSans-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Google Sans";
+  src: url("/fonts/GoogleSans-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Google Sans";
+  src: url("/fonts/GoogleSans-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+*/
+
+:root {
+  --typefree-custom-font-sans: "Google Sans";
+}

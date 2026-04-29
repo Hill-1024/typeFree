@@ -1,5 +1,10 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { marked, highlightMarkdownSyntax } from '../utils';
+import {
+  getCodeBlockPreview,
+  getRawOffsetFromPoint,
+  highlightMarkdownSyntax,
+  marked
+} from '../utils';
 import { BlockData, FocusInstruction } from '../types';
 import { MermaidPreview } from './MermaidPreview';
 import { MathPreview } from './MathPreview';
@@ -7,6 +12,7 @@ import { MathPreview } from './MathPreview';
 interface BlockProps {
   block: BlockData;
   isActive: boolean;
+  theme: 'light' | 'dark';
   onActivate: (offset?: number) => void;
   onChange: (newRaw: string) => void;
   onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
@@ -23,6 +29,7 @@ const SUPPORTED_LANGS = [
 export const Block = ({
   block,
   isActive,
+  theme,
   onActivate,
   onChange,
   onKeyDown,
@@ -32,6 +39,7 @@ export const Block = ({
 }: BlockProps) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const renderRef = useRef<HTMLDivElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
   const [cursorPos, setCursorPos] = useState<number | null>(null);
   const [suggestionState, setSuggestionState] = useState<{
     visible: boolean;
@@ -41,7 +49,8 @@ export const Block = ({
   }>({ visible: false, list: [], pos: { top: 0, left: 0 }, query: '' });
   const lastConsumedInstruction = useRef<FocusInstruction | null>(null);
   const syntaxRef = useRef<HTMLDivElement>(null);
-  const [isAnimating, setIsAnimating] = useState(false);
+  const isComposingRef = useRef(false);
+  const compositionEndTimerRef = useRef<number | null>(null);
   // Ref to store click-calculated offset, bypasses React state batching entirely
   const pendingClickOffset = useRef<number | null>(null);
 
@@ -54,12 +63,6 @@ export const Block = ({
 
   const mermaidCode = isMermaid ? block.raw.replace(/^```mermaid[ \t]*\n?/, '').replace(/\n?```[ \t]*$/, '') : '';
   const mathCode = isMathBlock ? block.raw.replace(/^\$\$[ \t]*\n?/, '').replace(/\n?\$\$[ \t]*$/, '') : '';
-
-  useEffect(() => {
-    setIsAnimating(true);
-    const timer = setTimeout(() => setIsAnimating(false), 300);
-    return () => clearTimeout(timer);
-  }, [isActive]);
 
   // Helper to render tokens recursively - ensures perfect nesting and no line breaks
   const renderToken = (token: any, index: number): React.ReactNode => {
@@ -93,20 +96,29 @@ export const Block = ({
         return <strong key={index}>{token.tokens?.map((t: any, i: number) => renderToken(t, i)) || token.text}</strong>;
       case 'em':
         return <em key={index}>{token.tokens?.map((t: any, i: number) => renderToken(t, i)) || token.text}</em>;
-      case 'code':
+      case 'code': {
+        const codePreview = getCodeBlockPreview(token.raw, token.lang);
         return (
-          <div key={index} className="relative font-mono text-[0.875em] leading-relaxed whitespace-pre">
-            <div 
-              className="overflow-x-auto hide-scrollbar"
-              dangerouslySetInnerHTML={{ __html: highlightMarkdownSyntax(token.raw) }}
-            />
-            {token.lang && (
-              <div className="absolute bottom-[-1rem] right-0 text-[10px] font-bold uppercase tracking-widest text-md-onSurfaceVariant/30 select-none">
-                {token.lang}
+          <div
+            key={index}
+            className="md-code-preview relative font-mono text-[0.875em] leading-relaxed"
+            data-code-lang={codePreview.languageLabel || undefined}
+          >
+            <div className="overflow-x-auto hide-scrollbar">
+              <div className="md-code-lines">
+                {codePreview.highlightedLines.map((lineHtml, lineIndex) => (
+                  <div key={lineIndex} className="md-code-line">
+                    <span
+                      className="md-code-line-content"
+                      dangerouslySetInnerHTML={{ __html: lineHtml }}
+                    />
+                  </div>
+                ))}
               </div>
-            )}
+            </div>
           </div>
         );
+      }
       case 'codespan':
         return <code key={index} className="bg-md-surfaceVariant/50 px-1 rounded font-mono text-[0.9em]">{token.text}</code>;
       case 'link':
@@ -127,77 +139,54 @@ export const Block = ({
     return marked.lexer(block.raw);
   }, [block.raw]);
 
+  const getSpecialBlockPreviewOffset = (clientX: number, clientY: number) => {
+    if (!previewRef.current) {
+      return block.raw.length;
+    }
+
+    const lines = block.raw.split('\n');
+    let startLine = 0;
+    let endLine = lines.length - 1;
+
+    if (isMermaid || isMathBlock) {
+      startLine = Math.min(1, endLine);
+      const closingFence = isMermaid ? '```' : '$$';
+      if (endLine > startLine && lines[endLine].trim() === closingFence) {
+        endLine -= 1;
+      }
+    }
+
+    if (endLine < startLine) {
+      return block.raw.length;
+    }
+
+    const rect = previewRef.current.getBoundingClientRect();
+    const safeX = Math.max(rect.left + 4, Math.min(clientX, rect.right - 4));
+    const safeY = Math.max(rect.top + 1, Math.min(clientY, rect.bottom - 1));
+    const xRatio = rect.width > 0 ? (safeX - rect.left) / rect.width : 1;
+    const yRatio = rect.height > 0 ? (safeY - rect.top) / rect.height : 1;
+    const targetLine = startLine + Math.round(yRatio * (endLine - startLine));
+    const line = lines[targetLine] ?? '';
+    const column = Math.min(line.length, Math.round(xRatio * line.length));
+
+    let offset = 0;
+    for (let lineIndex = 0; lineIndex < targetLine; lineIndex++) {
+      offset += lines[lineIndex].length + 1;
+    }
+
+    return Math.min(block.raw.length, offset + column);
+  };
+
   const handleActivateWithPosition = (e: React.MouseEvent) => {
-    if (isActive) return;
-
     let offset = block.raw.length;
-    const targetRef = renderRef;
+    const targetNode = e.target as Node | null;
 
-    if (targetRef.current) {
-      const rect = targetRef.current.getBoundingClientRect();
-
-      if (e.clientX <= rect.left + 16) {
-        pendingClickOffset.current = 0;
-        setCursorPos(0);
-        onActivate(0);
-        return;
-      }
-
-      if (e.clientX >= rect.right - 16) {
-        pendingClickOffset.current = block.raw.length;
-        setCursorPos(block.raw.length);
-        onActivate(block.raw.length);
-        return;
-      }
-
-      const constrainedX = Math.max(rect.left + 5, Math.min(e.clientX, rect.right - 5));
-
-      const range = (document as any).caretRangeFromPoint?.(constrainedX, e.clientY) || 
-                    (document as any).caretPositionFromPoint?.(constrainedX, e.clientY);
-
-      if (range) {
-        const container = range.startContainer || range.offsetNode;
-        const containerOffset = range.startOffset !== undefined ? range.startOffset : range.offset;
-        
-        if (container && targetRef.current.contains(container)) {
-          try {
-            const preRange = document.createRange();
-            preRange.selectNodeContents(targetRef.current);
-            preRange.setEnd(container, containerOffset);
-            const textBefore = preRange.toString();
-            
-            let rawIndex = 0;
-            let renderIndex = 0;
-            
-            while (rawIndex < block.raw.length && renderIndex < textBefore.length) {
-              const rChar = block.raw[rawIndex];
-              const tChar = textBefore[renderIndex];
-              
-              if (rChar === tChar || (/\s/.test(rChar) && /\s/.test(tChar))) {
-                rawIndex++;
-                renderIndex++;
-              } else {
-                let found = false;
-                for (let i = 1; i <= 15 && rawIndex + i < block.raw.length; i++) {
-                  if (block.raw[rawIndex + i] === tChar || (/\s/.test(block.raw[rawIndex + i]) && /\s/.test(tChar))) {
-                    found = true;
-                    break;
-                  }
-                }
-                if (found) {
-                  rawIndex++;
-                } else {
-                  renderIndex++;
-                }
-              }
-            }
-            offset = rawIndex;
-          } catch (err) {
-            console.error("Failed to calculate click offset:", err);
-            offset = block.raw.length;
-          }
-        }
-      }
+    if ((isMermaid || isMathBlock) && previewRef.current && targetNode && previewRef.current.contains(targetNode)) {
+      offset = getSpecialBlockPreviewOffset(e.clientX, e.clientY);
+    } else if (renderRef.current) {
+      offset = getRawOffsetFromPoint(block.raw, renderRef.current, e.clientX, e.clientY);
+    } else if ((isMermaid || isMathBlock) && previewRef.current) {
+      offset = getSpecialBlockPreviewOffset(e.clientX, e.clientY);
     }
 
     const finalOffset = Math.min(offset, block.raw.length);
@@ -221,6 +210,12 @@ export const Block = ({
       return () => textarea.removeEventListener('scroll', handleScroll);
     }
   }, [isActive]);
+
+  useEffect(() => () => {
+    if (compositionEndTimerRef.current !== null) {
+      window.clearTimeout(compositionEndTimerRef.current);
+    }
+  }, []);
 
   // Aggressively enforce cursor position throughout the CSS transition.
   // Called from both the click handler (via pendingClickOffset) and focusInstruction path.
@@ -313,7 +308,31 @@ export const Block = ({
     if (onSelect) onSelect(target.selectionStart);
   };
 
+  const handleCompositionStart = () => {
+    if (compositionEndTimerRef.current !== null) {
+      window.clearTimeout(compositionEndTimerRef.current);
+      compositionEndTimerRef.current = null;
+    }
+    isComposingRef.current = true;
+  };
+
+  const handleCompositionEnd = (e: React.CompositionEvent<HTMLTextAreaElement>) => {
+    handleSelect(e);
+    compositionEndTimerRef.current = window.setTimeout(() => {
+      isComposingRef.current = false;
+      compositionEndTimerRef.current = null;
+    }, 0);
+  };
+
+  const isCompositionKeyEvent = (e: React.KeyboardEvent<HTMLTextAreaElement>) => (
+    isComposingRef.current || e.nativeEvent.isComposing || e.key === 'Process' || e.keyCode === 229
+  );
+
   const handleLocalKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (isCompositionKeyEvent(e)) {
+      return;
+    }
+
     const target = e.target as HTMLTextAreaElement;
     const { selectionStart: start, selectionEnd: end, value: val } = target;
 
@@ -500,15 +519,25 @@ export const Block = ({
     }
   }, [activeInlineMath, cursorPos, block.raw, isActive]);
 
-  let wrapperClass = "relative w-full transition-all duration-200 py-1 my-1";
+  const shellTransitionClass = transitionMode === 'smooth'
+    ? 'transition-[background-color,border-color,box-shadow,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none'
+    : '';
+  const layerTransitionClass = transitionMode === 'smooth'
+    ? 'transition-[opacity,transform] duration-220 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[opacity,transform] motion-reduce:transition-none'
+    : '';
+  const revealTransitionClass = transitionMode === 'smooth'
+    ? 'transition-[grid-template-rows,opacity,transform,padding,border-color,max-height,margin] duration-240 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none'
+    : '';
+
+  let wrapperClass = `relative w-full py-1 my-1 ${shellTransitionClass}`;
   if (isCodeBlock || isMathBlock) {
     if (isMermaid || isMathBlock) {
-      wrapperClass = `relative w-full transition-all duration-200 my-4 rounded-xl p-4 ${isActive ? 'bg-md-surfaceVariant/50' : 'hover:bg-md-surfaceVariant/30 cursor-pointer'}`;
+      wrapperClass = `relative w-full my-4 rounded-xl p-4 ${shellTransitionClass} ${isActive ? 'bg-md-surfaceVariant/50 shadow-[0_18px_36px_-28px_rgba(15,23,42,0.45)]' : 'hover:bg-md-surfaceVariant/30 cursor-pointer'}`;
     } else {
-      wrapperClass = "relative w-full transition-all duration-200 bg-md-surfaceVariant/50 p-4 rounded-xl my-2";
+      wrapperClass = `relative w-full bg-md-surfaceVariant/50 p-4 rounded-xl my-2 ${shellTransitionClass}`;
     }
   } else if (isQuote) {
-    wrapperClass = "relative w-full transition-all duration-200 border-l-4 border-md-primary pl-4 bg-md-surfaceVariant/30 py-2 my-2 rounded-r-lg";
+    wrapperClass = `relative w-full border-l-4 border-md-primary pl-4 bg-md-surfaceVariant/30 py-2 my-2 rounded-r-lg ${shellTransitionClass}`;
   } else if (block.raw.startsWith('# ')) {
     wrapperClass += " mt-6 mb-2";
   } else if (block.raw.startsWith('## ')) {
@@ -531,14 +560,12 @@ export const Block = ({
   const isCode = isCodeBlock || isMathBlock;
   const sharedStyles = `${typographyClass} w-full ${isCode ? 'whitespace-pre overflow-x-auto' : 'whitespace-pre-wrap break-words overflow-visible'} m-0 border-none box-border bg-transparent outline-none resize-none hide-scrollbar leading-relaxed`;
 
-  const transitionClass = transitionMode === 'smooth' ? 'transition-all duration-200 ease-in-out' : '';
-
   if (isMermaid || isMathBlock) {
     return (
       <div className={wrapperClass} onClick={handleActivateWithPosition}>
-        <div className={`grid ${transitionClass} ${isActive ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
+        <div className={`grid ${revealTransitionClass} ${isActive ? 'grid-rows-[1fr] opacity-100 translate-y-0' : 'grid-rows-[0fr] opacity-0 -translate-y-0.5 pointer-events-none'}`}>
           <div className="overflow-hidden min-h-0">
-            <div className="relative w-full mb-4">
+            <div className={`relative w-full mb-4 ${layerTransitionClass} ${isActive ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1'}`}>
               {suggestionState.visible && (
                 <div 
                   className="absolute z-[100] bg-md-surface shadow-2xl rounded-xl border border-md-outlineVariant py-2 min-w-[160px] animate-in fade-in zoom-in duration-200"
@@ -572,6 +599,8 @@ export const Block = ({
                 value={block.raw}
                 onChange={handleChange}
                 onSelect={handleSelect}
+                onCompositionStart={handleCompositionStart}
+                onCompositionEnd={handleCompositionEnd}
                 onKeyDown={handleLocalKeyDown}
                 onFocus={() => onActivate()}
                 className={`${sharedStyles} hide-scrollbar absolute top-0 left-0 w-full h-full text-transparent caret-md-onSurface z-10`}
@@ -581,15 +610,20 @@ export const Block = ({
           </div>
         </div>
 
-        <div className={`transition-all duration-200 ${isActive ? 'pt-4 border-t border-md-outline/20' : 'pt-0 border-t border-transparent'}`}>
-          <div className={`transition-all duration-200 overflow-hidden ${isActive ? 'max-h-10 opacity-100 mb-2' : 'max-h-0 opacity-0 mb-0'}`}>
+        <div className={`${revealTransitionClass} ${isActive ? 'pt-4 border-t border-md-outline/20' : 'pt-0 border-t border-transparent'}`}>
+          <div className={`${revealTransitionClass} overflow-hidden ${isActive ? 'max-h-10 opacity-100 mb-2 translate-y-0' : 'max-h-0 opacity-0 mb-0 -translate-y-0.5'}`}>
             <div className="text-xs text-md-onSurfaceVariant uppercase tracking-wider font-semibold">Live Preview</div>
           </div>
-          {isMermaid ? (
-            <MermaidPreview code={mermaidCode} id={block.id} />
-          ) : (
-            <MathPreview code={mathCode} displayMode={true} />
-          )}
+          <div
+            ref={previewRef}
+            className={`${layerTransitionClass} ${isActive ? 'opacity-100 translate-y-0' : 'opacity-90 translate-y-0'}`}
+          >
+            {isMermaid ? (
+              <MermaidPreview code={mermaidCode} id={block.id} theme={theme} />
+            ) : (
+              <MathPreview code={mathCode} displayMode={true} />
+            )}
+          </div>
         </div>
       </div>
     );
@@ -600,7 +634,7 @@ export const Block = ({
       <div className="relative block-relative">
         <div className="grid grid-cols-1 grid-rows-1">
           {/* Render Layer Container */}
-          <div className={`col-start-1 row-start-1 ${transitionClass} ${!isActive ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+          <div className={`col-start-1 row-start-1 ${layerTransitionClass} ${!isActive ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-1 pointer-events-none'}`}>
             <div className="overflow-hidden min-h-0">
               <div ref={renderRef} className="md-render min-h-[1.5rem] cursor-text">
                 {tokens.map((token: any, i: number) => renderToken(token, i))}
@@ -609,7 +643,7 @@ export const Block = ({
           </div>
 
           {/* Edit Layer Container - pointer-events-none when inactive prevents the z-10 textarea from intercepting clicks meant for the render layer */}
-          <div className={`col-start-1 row-start-1 ${transitionClass} ${isActive ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+          <div className={`col-start-1 row-start-1 ${layerTransitionClass} ${isActive ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1 pointer-events-none'}`}>
             <div className="overflow-hidden min-h-0">
               <div className="relative edit-layer-relative w-full min-h-[1.5rem]">
                 <div 
@@ -626,6 +660,8 @@ export const Block = ({
                   onKeyUp={handleSelect}
                   onMouseUp={handleSelect}
                   onBlur={handleSelect}
+                  onCompositionStart={handleCompositionStart}
+                  onCompositionEnd={handleCompositionEnd}
                   onKeyDown={handleLocalKeyDown}
                   onFocus={() => onActivate()}
                   className={`${sharedStyles} hide-scrollbar absolute top-0 left-0 w-full h-full text-transparent caret-md-onSurface z-10`}
@@ -664,9 +700,9 @@ export const Block = ({
             className="absolute z-50 transform -translate-x-1/2 mt-2 pointer-events-none"
             style={{ top: bubblePos.top, left: bubblePos.left }}
           >
-            <div className="bg-white shadow-2xl rounded-2xl p-4 border border-md-outlineVariant min-w-[100px] flex justify-center items-center animate-in fade-in zoom-in duration-200">
+            <div className="bg-md-surface shadow-2xl rounded-2xl p-4 border border-md-outlineVariant min-w-[100px] flex justify-center items-center animate-in fade-in zoom-in duration-200">
               <MathPreview code={activeInlineMath} displayMode={false} />
-              <div className="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2 rotate-45 w-3 h-3 bg-white border-l border-t border-md-outlineVariant"></div>
+              <div className="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2 rotate-45 w-3 h-3 bg-md-surface border-l border-t border-md-outlineVariant"></div>
             </div>
           </div>
         )}

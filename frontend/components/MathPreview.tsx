@@ -97,7 +97,7 @@ export const MathPreview: React.FC<MathPreviewProps> = ({ code, displayMode = fa
       <div className="relative w-full flex flex-col items-center my-2 group">
         {/* Display error with smooth transition */}
         <div className={`w-full overflow-hidden transition-all duration-300 ease-in-out ${error ? 'max-h-20 opacity-100 mb-2 translate-y-0' : 'max-h-0 opacity-0 mb-0 -translate-y-2 pointer-events-none'}`}>
-          <div className="p-2 bg-red-50/95 backdrop-blur text-red-600 font-mono text-xs rounded-md border border-red-200 z-10 shadow-sm">
+          <div className="p-2 bg-md-errorContainer/80 backdrop-blur text-md-onErrorContainer font-mono text-xs rounded-md border border-md-error/20 z-10 shadow-sm">
             {displayError.split('\n')[0]}
           </div>
         </div>
@@ -113,7 +113,7 @@ export const MathPreview: React.FC<MathPreviewProps> = ({ code, displayMode = fa
     <span className="inline-relative">
       <span ref={containerRef} className="inline" />
       {error && (
-        <span className="text-red-500 font-mono text-[10px] ml-1 px-1 bg-red-50 rounded border border-red-100">
+        <span className="text-md-onErrorContainer font-mono text-[10px] ml-1 px-1 bg-md-errorContainer/80 rounded border border-md-error/20">
           !
         </span>
       )}

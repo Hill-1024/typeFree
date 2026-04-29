@@ -1,73 +1,126 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { FolderOpen, Save, Settings2, SquarePen, Eye } from 'lucide-react';
 import { BlockData, ViewMode, FocusInstruction } from './types';
+import {
+  AppLocale,
+  getDefaultFileName,
+  getFilePickerTypes,
+  getLocaleLabel,
+  getStoredLocale,
+  LOCALE_STORAGE_KEY,
+  t
+} from './i18n';
 import {
   BLOCK_SEPARATOR,
   EMPTY_BLOCK_SEPARATOR,
   getBlockStartOffset,
   getCursorFromGlobalOffset,
+  getRawOffsetFromPoint,
   rawToBlocks
 } from './utils';
 import { Block } from './components/Block';
 
-const INITIAL_CONTENT = `\
-# Welcome to typeFree
+type ThemeMode = 'light' | 'dark' | 'system';
+type ResolvedTheme = 'light' | 'dark';
 
-This is a Typora-like editor built with React. It strictly separates the **editing layer** (raw markdown) from the **rendering layer** (beautified HTML).
+const THEME_STORAGE_KEY = 'typefree-theme-mode';
 
-## Features
+const getStoredThemeMode = (): ThemeMode => {
+  if (typeof window === 'undefined') return 'system';
+  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+  return stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'system';
+};
 
-- **Real-time Preview:** Click any block to edit its raw markdown. Click away to see it rendered.
-- **Strict Separation:** The underlying data is pure Markdown. The view is just a projection.
-- **typeFree Design:** Clean, distraction-free interface resembling a white paper.
+const getBrowserSystemTheme = (): ResolvedTheme => (
+  typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches
+    ? 'dark'
+    : 'light'
+);
 
-### LaTeX Math
+const getSystemTheme = (): ResolvedTheme => window.typefreeDesktop?.getSystemTheme() ?? getBrowserSystemTheme();
 
-Inline math like $E = mc^2$ is supported. Click this paragraph and move your cursor inside the formula to see the floating preview!
+const resolveTheme = (themeMode: ThemeMode, systemTheme: ResolvedTheme): ResolvedTheme => (
+  themeMode === 'system' ? systemTheme : themeMode
+);
 
-Block math is also supported:
+const isCompositionKeyEvent = (event: React.KeyboardEvent<HTMLElement>) => (
+  event.nativeEvent.isComposing || event.key === 'Process' || event.keyCode === 229
+);
 
-$$
-\\begin{pmatrix}
-1 & a_1 & a_1^2 \\\\
-1 & a_2 & a_2^2 \\\\
-1 & a_3 & a_3^2
-\\end{pmatrix}
-$$
+const splitFileName = (fileName: string) => {
+  const normalized = fileName.trim();
+  const lastDotIndex = normalized.lastIndexOf('.');
 
-### Mermaid Diagrams
+  if (lastDotIndex <= 0 || lastDotIndex === normalized.length - 1) {
+    return {
+      stem: normalized,
+      extension: ''
+    };
+  }
 
-Click the diagram below to edit its source code.
+  return {
+    stem: normalized.slice(0, lastDotIndex),
+    extension: normalized.slice(lastDotIndex)
+  };
+};
 
-\`\`\`mermaid
-graph TD
-  A[Hard] -->|Text| B(Round)
-  B --> C{Decision}
-  C -->|One| D[Result 1]
-  C -->|Two| E[Result 2]
-\`\`\`
+const getDisplayFileName = (fileName: string) => splitFileName(fileName).stem || fileName;
 
-> "Rendering is just the beautification of our editing."
+const INITIAL_CONTENT = '';
 
-\`\`\`javascript
-// Code blocks work too!
-function greet() {
-  console.log("Hello, world!");
-}
-\`\`\`\
-`;
+const TopbarActionButton = ({
+  title,
+  active = false,
+  onClick,
+  children
+}: {
+  title: string;
+  active?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={`flex h-9 w-9 items-center justify-center rounded-xl transition-colors focus:outline-none ${
+      active
+        ? 'bg-md-primary/12 text-md-primary'
+        : 'text-md-outline hover:bg-md-surfaceVariant/40 hover:text-md-primary'
+    }`}
+    title={title}
+    aria-label={title}
+  >
+    {children}
+  </button>
+);
 
 export default function App() {
+  const isDesktopApp = Boolean(window.typefreeDesktop?.isDesktop) || /\bElectron\//.test(window.navigator.userAgent);
+  const [locale, setLocale] = useState<AppLocale>(() => getStoredLocale());
   const [mode, setMode] = useState<ViewMode>('wysiwyg');
   const [rawContent, setRawContent] = useState<string>(INITIAL_CONTENT);
+  const [lastSavedContent, setLastSavedContent] = useState<string>(INITIAL_CONTENT);
+  const [currentFileName, setCurrentFileName] = useState<string>(() => getDefaultFileName(getStoredLocale()));
+  const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
+  const [isRenamingTitle, setIsRenamingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
   const [focusInstruction, setFocusInstruction] = useState<FocusInstruction | null>(null);
   const [blockTransition, setBlockTransition] = useState<'smooth' | 'none'>('smooth');
   const [showSettings, setShowSettings] = useState(false);
   const [enterMode, setEnterMode] = useState<'newline' | 'paragraph'>('paragraph');
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => getStoredThemeMode());
+  const [systemTheme, setSystemTheme] = useState<ResolvedTheme>(() => getSystemTheme());
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => resolveTheme(getStoredThemeMode(), getSystemTheme()));
   const [targetGlobalOffset, setTargetGlobalOffset] = useState<number | null>(null);
   const sourceEditorRef = useRef<HTMLTextAreaElement>(null);
   const sourceScrollContainerRef = useRef<HTMLDivElement>(null);
+  const titleInputRef = useRef<HTMLInputElement>(null);
   const syncRef = useRef<{ blockId: string | null; offset: number }>({ blockId: null, offset: 0 });
+  const sourceSelectionRef = useRef(0);
+  const browserFileHandleRef = useRef<any>(null);
+  const modeRef = useRef<ViewMode>('wysiwyg');
+  const titleSelectOnFocusRef = useRef(false);
 
   const blocksRef = useRef<BlockData[]>([]);
   const blocks = useMemo(() => {
@@ -75,6 +128,116 @@ export default function App() {
     blocksRef.current = newBlocks;
     return newBlocks;
   }, [rawContent]);
+  const sourceCanvasWidth = useMemo(() => {
+    const longestLineLength = rawContent.split('\n').reduce((max, line) => Math.max(max, line.length), 0);
+    return `max(100%, calc(${Math.max(longestLineLength, 1)}ch + 4rem))`;
+  }, [rawContent]);
+  const defaultFileName = useMemo(() => getDefaultFileName(locale), [locale]);
+  const displayFileName = useMemo(() => getDisplayFileName(currentFileName), [currentFileName]);
+  const filePickerTypes = useMemo(() => getFilePickerTypes(locale), [locale]);
+  const translate = useCallback((key: Parameters<typeof t>[1], vars?: Record<string, string>) => t(locale, key, vars), [locale]);
+  const isDirty = rawContent !== lastSavedContent;
+
+  useEffect(() => {
+    if (window.typefreeDesktop) {
+      setSystemTheme(window.typefreeDesktop.getSystemTheme());
+      return window.typefreeDesktop.onSystemThemeChange((nextTheme) => {
+        setSystemTheme(nextTheme);
+      });
+    }
+
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleSystemThemeChange = () => setSystemTheme(getBrowserSystemTheme());
+
+    handleSystemThemeChange();
+    media.addEventListener('change', handleSystemThemeChange);
+    return () => media.removeEventListener('change', handleSystemThemeChange);
+  }, []);
+
+  useEffect(() => {
+    const nextTheme = resolveTheme(themeMode, systemTheme);
+    setResolvedTheme(nextTheme);
+    document.documentElement.dataset.theme = nextTheme;
+    document.documentElement.style.colorScheme = nextTheme;
+    window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+  }, [systemTheme, themeMode]);
+
+  useEffect(() => {
+    document.documentElement.lang = locale;
+    window.localStorage.setItem(LOCALE_STORAGE_KEY, locale);
+  }, [locale]);
+
+  useEffect(() => {
+    document.title = `${isDirty ? '• ' : ''}${currentFileName} - TypeFree`;
+  }, [currentFileName, isDirty]);
+
+  useEffect(() => {
+    if (currentFilePath === null && browserFileHandleRef.current === null && rawContent === '' && lastSavedContent === '') {
+      setCurrentFileName(defaultFileName);
+    }
+  }, [currentFilePath, defaultFileName, lastSavedContent, rawContent]);
+
+  useEffect(() => {
+    if (!isRenamingTitle || !titleInputRef.current) {
+      return;
+    }
+
+    const input = titleInputRef.current;
+    input.focus();
+
+    if (titleSelectOnFocusRef.current) {
+      input.select();
+      titleSelectOnFocusRef.current = false;
+    }
+  }, [isRenamingTitle]);
+
+  useEffect(() => {
+    if (!isRenamingTitle) {
+      setTitleDraft(displayFileName);
+    }
+  }, [displayFileName, isRenamingTitle]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!isDirty) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isDirty]);
+
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  useEffect(() => {
+    if (!window.typefreeDesktop?.updateDocumentState) {
+      return;
+    }
+
+    window.typefreeDesktop.updateDocumentState({
+      dirty: isDirty,
+      filePath: currentFilePath,
+      fileName: currentFileName,
+      content: rawContent
+    });
+  }, [currentFileName, currentFilePath, isDirty, rawContent]);
+
+  useEffect(() => {
+    if (!window.typefreeDesktop?.updateEditorUiState) {
+      return;
+    }
+
+    window.typefreeDesktop.updateEditorUiState({
+      locale,
+      themeMode,
+      enterMode,
+      blockTransition,
+      viewMode: mode
+    });
+  }, [blockTransition, enterMode, locale, mode, themeMode]);
 
   // Effect to handle cursor sync when switching modes
   useEffect(() => {
@@ -86,6 +249,7 @@ export default function App() {
         editor.focus();
         const safeOffset = Math.min(targetGlobalOffset, editor.value.length);
         editor.setSelectionRange(safeOffset, safeOffset);
+        sourceSelectionRef.current = safeOffset;
         
         const textBefore = editor.value.substring(0, safeOffset);
         const linesBefore = textBefore.split('\n').length - 1;
@@ -111,10 +275,258 @@ export default function App() {
     return nextBlocks;
   }, []);
 
+  const resetEditorCursor = useCallback((nextMode: ViewMode) => {
+    syncRef.current = { blockId: null, offset: 0 };
+    sourceSelectionRef.current = 0;
+    setActiveBlockId(null);
+    setFocusInstruction(null);
+    if (nextMode === 'raw') {
+      setTargetGlobalOffset(0);
+      return;
+    }
+    setTargetGlobalOffset(null);
+  }, []);
+
+  const applyLoadedDocument = useCallback((nextRaw: string, options: {
+    fileName: string;
+    filePath?: string | null;
+    browserHandle?: any;
+  }) => {
+    commitRawContent(nextRaw);
+    setLastSavedContent(nextRaw);
+    setCurrentFileName(options.fileName || defaultFileName);
+    setCurrentFilePath(options.filePath ?? null);
+    browserFileHandleRef.current = options.browserHandle ?? null;
+    resetEditorCursor(mode);
+  }, [commitRawContent, defaultFileName, mode, resetEditorCursor]);
+
+  const createNewDocument = useCallback(() => {
+    browserFileHandleRef.current = null;
+    applyLoadedDocument('', {
+      fileName: defaultFileName,
+      filePath: null
+    });
+  }, [applyLoadedDocument, defaultFileName]);
+
+  const saveToBrowserHandle = useCallback(async (handle: any, content: string) => {
+    const writable = await handle.createWritable();
+    await writable.write(content);
+    await writable.close();
+  }, []);
+
+  const openBrowserFileFromInput = useCallback(async () => {
+    return new Promise<{ canceled: boolean; content?: string; name?: string }>((resolve, reject) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.md,.markdown,.mdown,.mkd,.txt,text/markdown,text/plain';
+      input.onchange = async () => {
+        const file = input.files?.[0];
+        if (!file) {
+          resolve({ canceled: true });
+          return;
+        }
+
+        try {
+          const content = await file.text();
+          resolve({
+            canceled: false,
+            content,
+            name: file.name
+          });
+        } catch (error) {
+          reject(error);
+        }
+      };
+      input.click();
+    });
+  }, []);
+
+  const confirmDiscardChanges = useCallback(() => {
+    if (!isDirty) return true;
+    return window.confirm(translate('confirmDiscardChanges'));
+  }, [isDirty, translate]);
+
+  const handleOpenFile = useCallback(async () => {
+    if (!confirmDiscardChanges()) return;
+
+    try {
+      if (window.typefreeDesktop?.openFile) {
+        const result = await window.typefreeDesktop.openFile();
+        if (result.canceled || typeof result.content !== 'string') return;
+
+        applyLoadedDocument(result.content, {
+          fileName: result.name || defaultFileName,
+          filePath: result.filePath ?? null
+        });
+        return;
+      }
+
+      const browserWindow = window as any;
+      if (typeof browserWindow.showOpenFilePicker === 'function') {
+        try {
+          const [handle] = await browserWindow.showOpenFilePicker({
+            multiple: false,
+            types: filePickerTypes
+          });
+
+          if (!handle) return;
+
+          const file = await handle.getFile();
+          applyLoadedDocument(await file.text(), {
+            fileName: file.name,
+            browserHandle: handle
+          });
+          return;
+        } catch (error: any) {
+          if (error?.name === 'AbortError') return;
+          throw error;
+        }
+      }
+
+      const result = await openBrowserFileFromInput();
+      if (result.canceled || typeof result.content !== 'string') return;
+
+      applyLoadedDocument(result.content, {
+        fileName: result.name || defaultFileName
+      });
+    } catch (error) {
+      console.error(error);
+      window.alert(translate('openFailed'));
+    }
+  }, [applyLoadedDocument, confirmDiscardChanges, defaultFileName, filePickerTypes, openBrowserFileFromInput, translate]);
+
+  const handleSaveFile = useCallback(async (options?: { saveAs?: boolean }) => {
+    const saveAs = options?.saveAs ?? false;
+    const suggestedName = currentFileName || defaultFileName;
+
+    try {
+      if (window.typefreeDesktop?.saveFile) {
+        const result = await window.typefreeDesktop.saveFile({
+          content: rawContent,
+          defaultPath: currentFilePath ?? suggestedName,
+          filePath: saveAs ? undefined : currentFilePath ?? undefined,
+          saveAs
+        });
+
+        if (result.canceled) return;
+
+        setLastSavedContent(rawContent);
+        setCurrentFilePath(result.filePath ?? null);
+        setCurrentFileName(result.name || suggestedName);
+        browserFileHandleRef.current = null;
+        return;
+      }
+
+      if (!saveAs && browserFileHandleRef.current) {
+        await saveToBrowserHandle(browserFileHandleRef.current, rawContent);
+        const file = await browserFileHandleRef.current.getFile();
+        setLastSavedContent(rawContent);
+        setCurrentFileName(file.name || suggestedName);
+        setCurrentFilePath(null);
+        return;
+      }
+
+      const browserWindow = window as any;
+      if (typeof browserWindow.showSaveFilePicker === 'function') {
+        try {
+          const handle = await browserWindow.showSaveFilePicker({
+            suggestedName,
+            types: filePickerTypes
+          });
+
+          await saveToBrowserHandle(handle, rawContent);
+          const file = await handle.getFile();
+          browserFileHandleRef.current = handle;
+          setLastSavedContent(rawContent);
+          setCurrentFileName(file.name || suggestedName);
+          setCurrentFilePath(null);
+          return;
+        } catch (error: any) {
+          if (error?.name === 'AbortError') return;
+          throw error;
+        }
+      }
+
+      const blob = new Blob([rawContent], { type: 'text/markdown;charset=utf-8' });
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = suggestedName;
+      link.click();
+      URL.revokeObjectURL(objectUrl);
+
+      browserFileHandleRef.current = null;
+      setLastSavedContent(rawContent);
+      setCurrentFileName(suggestedName);
+      setCurrentFilePath(null);
+    } catch (error) {
+      console.error(error);
+      window.alert(translate('saveFailed'));
+    }
+  }, [currentFileName, currentFilePath, defaultFileName, filePickerTypes, rawContent, saveToBrowserHandle, translate]);
+
+  const beginTitleRename = useCallback(() => {
+    titleSelectOnFocusRef.current = true;
+    setTitleDraft(getDisplayFileName(currentFileName));
+    setIsRenamingTitle(true);
+  }, [currentFileName]);
+
+  const cancelTitleRename = useCallback(() => {
+    setTitleDraft(getDisplayFileName(currentFileName));
+    setIsRenamingTitle(false);
+  }, [currentFileName]);
+
+  const commitTitleRename = useCallback(async () => {
+    const nextTitle = titleDraft.trim();
+    if (!nextTitle) {
+      setTitleDraft(getDisplayFileName(currentFileName));
+      setIsRenamingTitle(false);
+      return;
+    }
+
+    if (nextTitle === getDisplayFileName(currentFileName)) {
+      setTitleDraft(nextTitle);
+      setIsRenamingTitle(false);
+      return;
+    }
+
+    try {
+      if (currentFilePath && window.typefreeDesktop?.renameFile) {
+        const result = await window.typefreeDesktop.renameFile({
+          filePath: currentFilePath,
+          nextName: nextTitle
+        });
+
+        setCurrentFilePath(result.filePath);
+        setCurrentFileName(result.name || nextTitle);
+        setTitleDraft(result.name || nextTitle);
+        setIsRenamingTitle(false);
+        return;
+      }
+
+      const currentExtension = splitFileName(currentFileName).extension || '.md';
+      const normalizedTitle = splitFileName(nextTitle).extension ? nextTitle : `${nextTitle}${currentExtension}`;
+      setCurrentFileName(normalizedTitle);
+      setTitleDraft(nextTitle);
+      setIsRenamingTitle(false);
+    } catch (error) {
+      console.error(error);
+      window.alert(translate('renameFailed'));
+      setTitleDraft(getDisplayFileName(currentFileName));
+      setIsRenamingTitle(false);
+    }
+  }, [currentFileName, currentFilePath, titleDraft, translate]);
+
   const replaceRawRange = useCallback((start: number, end: number, replacement: string) => {
     const nextRaw = rawContent.slice(0, start) + replacement + rawContent.slice(end);
     return commitRawContent(nextRaw);
   }, [commitRawContent, rawContent]);
+
+  const syncFromSourceOffset = useCallback((globalOffset: number) => {
+    sourceSelectionRef.current = globalOffset;
+    const { blockId, offset } = getCursorFromGlobalOffset(blocksRef.current, globalOffset);
+    syncRef.current = { blockId: blockId ?? null, offset };
+  }, []);
 
   const getBlockRange = useCallback((index: number) => {
     const start = getBlockStartOffset(blocks, index);
@@ -124,27 +536,30 @@ export default function App() {
     return { start, end, trailingEnd };
   }, [blocks]);
 
-  const handleModeChange = (newMode: ViewMode) => {
-    if (newMode === mode) return;
+  const handleModeChange = useCallback((newMode: ViewMode) => {
+    const currentMode = modeRef.current;
+    if (newMode === currentMode) return;
 
     if (newMode === 'raw') {
       // SYNC: WYSIWYG -> Source
       let finalGlobalOffset = 0;
       const blockId = syncRef.current.blockId;
+      const currentBlocks = blocksRef.current;
       
       if (blockId) {
-        const activeIndex = blocks.findIndex((b: BlockData) => b.id === blockId);
+        const activeIndex = currentBlocks.findIndex((b: BlockData) => b.id === blockId);
         if (activeIndex !== -1) {
-          finalGlobalOffset = getBlockStartOffset(blocks, activeIndex) + syncRef.current.offset;
+          finalGlobalOffset = getBlockStartOffset(currentBlocks, activeIndex) + syncRef.current.offset;
         }
       }
 
+      sourceSelectionRef.current = finalGlobalOffset;
       setTargetGlobalOffset(finalGlobalOffset);
       setMode('raw');
     } else {
       // SYNC: Source -> WYSIWYG
-      const globalOffset = sourceEditorRef.current?.selectionStart || 0;
-      const { blockId: targetBlockId, offset: localOff } = getCursorFromGlobalOffset(blocks, globalOffset);
+      const globalOffset = sourceSelectionRef.current;
+      const { blockId: targetBlockId, offset: localOff } = getCursorFromGlobalOffset(blocksRef.current, globalOffset);
 
       setActiveBlockId(targetBlockId);
       syncRef.current = { blockId: targetBlockId ?? null, offset: localOff };
@@ -161,7 +576,7 @@ export default function App() {
         }, 50);
       }
     }
-  };
+  }, []);
 
   const handleBlockChange = useCallback((id: string, newRaw: string) => {
     const blockIndex = blocks.findIndex(block => block.id === id);
@@ -175,6 +590,7 @@ export default function App() {
     const currentBlock = blocks[index];
     const target = e.target as HTMLTextAreaElement;
     const cursorPosition = target.selectionStart;
+    const hasSelection = target.selectionStart !== target.selectionEnd;
     const { start: blockStart, end: blockEnd, trailingEnd } = getBlockRange(index);
 
     if (e.key === 'Enter') {
@@ -290,50 +706,116 @@ export default function App() {
       return;
     }
 
-    if (e.key === 'ArrowUp') {
-      const prevPos = target.selectionStart;
-      const isCodeOrMath = currentBlock.raw.trim().startsWith('```') || 
-                          (currentBlock.raw.trim().startsWith('$$') && currentBlock.raw.trim().endsWith('$$'));
-      
-      setTimeout(() => {
-        if (target.selectionStart === prevPos && index > 0) {
-          if (isCodeOrMath) {
-            if (prevPos === 0) {
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !hasSelection) {
+      const isCodeOrMath = currentBlock.raw.trim().startsWith('```') ||
+        (currentBlock.raw.trim().startsWith('$$') && currentBlock.raw.trim().endsWith('$$'));
+      const textBefore = currentBlock.raw.substring(0, cursorPosition);
+      const lines = currentBlock.raw.split('\n');
+      const currentLineIndex = textBefore.split('\n').length - 1;
+      const lastNewline = textBefore.lastIndexOf('\n');
+      const col = cursorPosition - (lastNewline === -1 ? 0 : lastNewline + 1);
+      const isFirstLine = currentLineIndex === 0;
+      const isLastLine = currentLineIndex === lines.length - 1;
+
+      if (!isCodeOrMath) {
+        const prevPos = cursorPosition;
+        const direction = e.key;
+
+        setTimeout(() => {
+          if (target.selectionStart !== prevPos || target.selectionEnd !== prevPos) {
+            if (direction === 'ArrowUp' && isFirstLine && target.selectionStart === 0) {
+              if (index === 0) {
+                syncRef.current = { blockId: currentBlock.id, offset: 0 };
+                return;
+              }
+
               setActiveBlockId(blocks[index - 1].id);
-              setFocusInstruction({ id: blocks[index - 1].id, type: 'jump', direction: 'up', col: 0, _ts: Date.now() });
+              setFocusInstruction({ id: blocks[index - 1].id, type: 'jump', direction: 'up', col, _ts: Date.now() });
+              return;
             }
-          } else {
-            const textBefore = currentBlock.raw.substring(0, prevPos);
-            const lastNewline = textBefore.lastIndexOf('\n');
-            const col = prevPos - (lastNewline === -1 ? 0 : lastNewline + 1);
+
+            if (direction === 'ArrowDown' && isLastLine && target.selectionStart === currentBlock.raw.length) {
+              if (index === blocks.length - 1) {
+                syncRef.current = { blockId: currentBlock.id, offset: currentBlock.raw.length };
+                return;
+              }
+
+              setActiveBlockId(blocks[index + 1].id);
+              setFocusInstruction({ id: blocks[index + 1].id, type: 'jump', direction: 'down', col, _ts: Date.now() });
+              return;
+            }
+
+            syncRef.current = { blockId: currentBlock.id, offset: target.selectionStart };
+            return;
+          }
+
+          if (direction === 'ArrowUp' && isFirstLine) {
+            if (index === 0) {
+              target.setSelectionRange(0, 0);
+              syncRef.current = { blockId: currentBlock.id, offset: 0 };
+              return;
+            }
+
             setActiveBlockId(blocks[index - 1].id);
             setFocusInstruction({ id: blocks[index - 1].id, type: 'jump', direction: 'up', col, _ts: Date.now() });
+            return;
           }
-        }
-      }, 0);
-      
-    } else if (e.key === 'ArrowDown') {
-      const prevPos = target.selectionStart;
-      const isCodeOrMath = currentBlock.raw.trim().startsWith('```') || 
-                          (currentBlock.raw.trim().startsWith('$$') && currentBlock.raw.trim().endsWith('$$'));
-      
-      setTimeout(() => {
-        if (target.selectionStart === prevPos && index < blocks.length - 1) {
-          if (isCodeOrMath) {
-            if (prevPos === currentBlock.raw.length) {
-              setActiveBlockId(blocks[index + 1].id);
-              setFocusInstruction({ id: blocks[index + 1].id, type: 'jump', direction: 'down', col: 0, _ts: Date.now() });
+
+          if (direction === 'ArrowDown' && isLastLine) {
+            if (index === blocks.length - 1) {
+              const endPos = currentBlock.raw.length;
+              target.setSelectionRange(endPos, endPos);
+              syncRef.current = { blockId: currentBlock.id, offset: endPos };
+              return;
             }
-          } else {
-            const textBefore = currentBlock.raw.substring(0, prevPos);
-            const lastNewline = textBefore.lastIndexOf('\n');
-            const col = prevPos - (lastNewline === -1 ? 0 : lastNewline + 1);
+
             setActiveBlockId(blocks[index + 1].id);
             setFocusInstruction({ id: blocks[index + 1].id, type: 'jump', direction: 'down', col, _ts: Date.now() });
           }
+        }, 0);
+        return;
+      }
+
+      if (e.key === 'ArrowUp' && isFirstLine) {
+        e.preventDefault();
+
+        if (cursorPosition > 0) {
+          target.setSelectionRange(0, 0);
+          syncRef.current = { blockId: currentBlock.id, offset: 0 };
+          return;
         }
-      }, 0);
-      
+
+        if (index > 0) {
+          setActiveBlockId(blocks[index - 1].id);
+          setFocusInstruction({ id: blocks[index - 1].id, type: 'jump', direction: 'up', col, _ts: Date.now() });
+          return;
+        }
+
+        target.setSelectionRange(0, 0);
+        syncRef.current = { blockId: currentBlock.id, offset: 0 };
+        return;
+      }
+
+      if (e.key === 'ArrowDown' && isLastLine) {
+        e.preventDefault();
+
+        const endPos = currentBlock.raw.length;
+        if (cursorPosition < endPos) {
+          target.setSelectionRange(endPos, endPos);
+          syncRef.current = { blockId: currentBlock.id, offset: endPos };
+          return;
+        }
+
+        if (index < blocks.length - 1) {
+          setActiveBlockId(blocks[index + 1].id);
+          setFocusInstruction({ id: blocks[index + 1].id, type: 'jump', direction: 'down', col, _ts: Date.now() });
+          return;
+        }
+
+        target.setSelectionRange(endPos, endPos);
+        syncRef.current = { blockId: currentBlock.id, offset: endPos };
+        return;
+      }
     } else if (e.key === 'ArrowLeft' && cursorPosition === 0) {
       if (index > 0) {
         e.preventDefault();
@@ -361,56 +843,180 @@ export default function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    const handleGlobalKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+
+      const key = event.key.toLowerCase();
+      if (key === 'o') {
+        event.preventDefault();
+        void handleOpenFile();
+        return;
+      }
+
+      if (key === 's') {
+        event.preventDefault();
+        void handleSaveFile({ saveAs: event.shiftKey });
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [handleOpenFile, handleSaveFile]);
+
+  useEffect(() => {
+    if (!window.typefreeDesktop?.onMenuAction) {
+      return;
+    }
+
+    return window.typefreeDesktop.onMenuAction((action, payload) => {
+      if (action === 'new-file') {
+        if (!confirmDiscardChanges()) {
+          return;
+        }
+        createNewDocument();
+        return;
+      }
+
+      if (action === 'open-file') {
+        void handleOpenFile();
+        return;
+      }
+
+      if (action === 'save-file') {
+        void handleSaveFile();
+        return;
+      }
+
+      if (action === 'save-file-as') {
+        void handleSaveFile({ saveAs: true });
+        return;
+      }
+
+      if (action === 'set-source-mode') {
+        const enabled = payload && 'enabled' in payload ? payload.enabled : false;
+        handleModeChange(enabled ? 'raw' : 'wysiwyg');
+        return;
+      }
+
+      if (action === 'set-locale') {
+        if (payload && 'locale' in payload && (payload.locale === 'en' || payload.locale === 'zh' || payload.locale === 'ja')) {
+          setLocale(payload.locale);
+        }
+        return;
+      }
+
+      if (action === 'set-theme-light') {
+        setThemeMode('light');
+        return;
+      }
+
+      if (action === 'set-theme-dark') {
+        setThemeMode('dark');
+        return;
+      }
+
+      if (action === 'set-theme-system') {
+        setThemeMode('system');
+        return;
+      }
+
+      if (action === 'set-enter-mode-newline') {
+        setEnterMode('newline');
+        return;
+      }
+
+      if (action === 'set-enter-mode-paragraph') {
+        setEnterMode('paragraph');
+        return;
+      }
+
+      if (action === 'set-block-transition-smooth') {
+        setBlockTransition('smooth');
+        return;
+      }
+
+      if (action === 'set-block-transition-none') {
+        setBlockTransition('none');
+      }
+    });
+  }, [confirmDiscardChanges, createNewDocument, handleModeChange, handleOpenFile, handleSaveFile]);
+
+  useEffect(() => {
+    if (!window.typefreeDesktop?.onOpenDocumentRequest) {
+      return;
+    }
+
+    return window.typefreeDesktop.onOpenDocumentRequest((payload) => {
+      if (!confirmDiscardChanges()) {
+        return;
+      }
+
+      applyLoadedDocument(payload.content, {
+        fileName: payload.name || defaultFileName,
+        filePath: payload.filePath ?? null
+      });
+    });
+  }, [applyLoadedDocument, confirmDiscardChanges, defaultFileName]);
+
   const handleContainerClick = (e: React.MouseEvent) => {
     if (e.target !== e.currentTarget) return;
 
-    const blockElements = Array.from(document.querySelectorAll('[data-block-id]'));
-    let clickX = e.clientX;
-    let clickY = e.clientY;
+    const blockElements = Array.from(document.querySelectorAll('[data-block-id]')) as HTMLElement[];
+    const clickX = e.clientX;
+    const clickY = e.clientY;
+
+    const focusBlockOffset = (blockId: string, offset: number) => {
+      const safeOffset = Math.max(0, offset);
+      setActiveBlockId(blockId);
+      syncRef.current = { blockId, offset: safeOffset };
+      setFocusInstruction({ id: blockId, type: 'offset', offset: safeOffset, _ts: Date.now() });
+    };
+
+    const resolveOffsetForElement = (element: HTMLElement, block: BlockData) => {
+      const renderSurface = element.querySelector('.md-render') as HTMLElement | null;
+      if (renderSurface) {
+        return getRawOffsetFromPoint(block.raw, renderSurface, clickX, clickY);
+      }
+
+      return clickY <= element.getBoundingClientRect().top ? 0 : block.raw.length;
+    };
+
+    if (blockElements.length === 0) {
+      return;
+    }
+
+    const firstBlockEl = blockElements[0];
+    const lastBlockEl = blockElements[blockElements.length - 1];
+    const firstBlockId = firstBlockEl.getAttribute('data-block-id');
+    const lastBlockId = lastBlockEl.getAttribute('data-block-id');
+    const firstBlock = blocks.find((block) => block.id === firstBlockId);
+    const lastBlock = blocks.find((block) => block.id === lastBlockId);
+
+    if (firstBlockEl && firstBlock && clickY <= firstBlockEl.getBoundingClientRect().top) {
+      focusBlockOffset(firstBlock.id, 0);
+      return;
+    }
+
+    if (lastBlockEl && lastBlock && clickY >= lastBlockEl.getBoundingClientRect().bottom) {
+      focusBlockOffset(lastBlock.id, lastBlock.raw.length);
+      return;
+    }
 
     for (const el of blockElements) {
       const rect = el.getBoundingClientRect();
       if (clickY >= rect.top && clickY <= rect.bottom) {
         const blockId = el.getAttribute('data-block-id');
         if (!blockId) continue;
-
-        // Constraint X coordinate to be within the block horizontally
-        // This makes caretRangeFromPoint find the character at the start/end of the line
-        const constrainedX = Math.max(rect.left + 5, Math.min(clickX, rect.right - 5));
-        
-        const range = (document as any).caretRangeFromPoint?.(constrainedX, clickY) || 
-                      (document as any).caretPositionFromPoint?.(constrainedX, clickY);
-        
-        if (range) {
-          const container = range.startContainer || range.offsetNode;
-          if (container) {
-            // Create a range that spans from the start of the block to the click point
-            const preRange = document.createRange();
-            const blockContentEl = el.querySelector('.md-render') || el;
-            preRange.selectNodeContents(blockContentEl);
-            
-            try {
-              if (range.startContainer) {
-                preRange.setEnd(range.startContainer, range.startOffset);
-              } else if (range.offsetNode) {
-                preRange.setEnd(range.offsetNode, range.offset);
-              }
-              
-              const offset = preRange.toString().length;
-              setActiveBlockId(blockId);
-              setFocusInstruction({ id: blockId, type: 'offset', offset, _ts: Date.now() });
-            } catch (err) {
-              console.error("Failed to calculate click offset:", err);
-              setActiveBlockId(blockId);
-            }
-            return;
-          }
-        }
+        const block = blocks.find((item) => item.id === blockId);
+        if (!block) continue;
+        focusBlockOffset(blockId, resolveOffsetForElement(el, block));
+        return;
       }
     }
 
     // If we clicked between blocks or below, find the closest block
-    let closestBlockId: string | null = null;
+    let closestBlockEl: HTMLElement | null = null;
     let minDistance = Infinity;
 
     for (const el of blockElements) {
@@ -421,82 +1027,206 @@ export default function App() {
       
       if (minBlockDist < minDistance) {
         minDistance = minBlockDist;
-        closestBlockId = el.getAttribute('data-block-id');
+        closestBlockEl = el;
       }
     }
 
-    if (closestBlockId) {
-      setActiveBlockId(closestBlockId);
-      
-      // If clicking way below all content, focus the end of the last block
-      const lastBlockEl = blockElements[blockElements.length - 1];
-      if (lastBlockEl && clickY > lastBlockEl.getBoundingClientRect().bottom + 20) {
-        setFocusInstruction({ id: closestBlockId, type: 'end', _ts: Date.now() });
-      }
+    if (closestBlockEl) {
+      const blockId = closestBlockEl.getAttribute('data-block-id');
+      const block = blocks.find((item) => item.id === blockId);
+      if (!blockId || !block) return;
+      focusBlockOffset(blockId, resolveOffsetForElement(closestBlockEl, block));
     }
   };
 
   return (
     <div className="h-screen flex flex-col bg-md-surface overflow-hidden relative font-sans">
-      {/* Floating Controls */}
-      <div className="absolute top-6 right-8 z-[100] flex gap-2">
-        <button 
-          onClick={() => setShowSettings(!showSettings)}
-          className={`p-2 transition-colors focus:outline-none ${showSettings ? 'text-md-primary' : 'text-md-outline hover:text-md-primary'}`}
-          title="Settings"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1-2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-        </button>
-        <button 
-          onClick={() => handleModeChange(mode === 'wysiwyg' ? 'raw' : 'wysiwyg')}
-          className="p-2 text-md-outline hover:text-md-primary transition-colors focus:outline-none"
-          title={mode === 'wysiwyg' ? 'Switch to Source Mode' : 'Switch to Preview Mode'}
-        >
-          {mode === 'wysiwyg' ? (
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 960 960" fill="currentColor"><path d="M320 720L80 480l240-240 57 57-184 184 183 183-56 56Zm320 0l-57-57 184-184-183-183 56-56 240 240-240 240Z"/></svg>
+      <header className="grid h-12 flex-shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-md-outlineVariant/35 px-4">
+        <div />
+        <div className="min-w-0 px-4 text-center">
+          {isRenamingTitle ? (
+            <div className="flex items-center justify-center gap-2">
+              <input
+                ref={titleInputRef}
+                value={titleDraft}
+                onChange={(event) => setTitleDraft(event.target.value)}
+                onBlur={commitTitleRename}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !isCompositionKeyEvent(event)) {
+                    event.preventDefault();
+                    commitTitleRename();
+                    return;
+                  }
+
+                  if (event.key === 'Escape') {
+                    event.preventDefault();
+                    cancelTitleRename();
+                  }
+                }}
+                className="min-w-0 max-w-full rounded-md bg-md-surfaceVariant/55 px-2 py-1 text-center text-sm font-semibold tracking-[0.01em] text-md-onSurface outline-none ring-1 ring-md-outlineVariant/50 focus:ring-md-primary"
+              />
+              {isDirty ? (
+                <span className="flex-shrink-0 text-xs font-medium text-md-primary">
+                  {translate('unsaved')}
+                </span>
+              ) : null}
+            </div>
           ) : (
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 960 960" fill="currentColor"><path d="M791 905L280 394l-87 87 183 183-56 56L80 480l143-143L55 169l57-57 736 736-57 57Zm-54-282l-57-57 87-87-183-183 56-56 240 240-143 143Z"/></svg>
+            <button
+              type="button"
+              onClick={beginTitleRename}
+              className={`max-w-full truncate rounded-md px-2 py-1 text-center text-sm font-semibold tracking-[0.01em] transition-colors focus:outline-none ${isDirty ? 'text-md-primary hover:text-md-primary' : 'text-md-onSurface hover:text-md-primary'}`}
+              title={currentFileName}
+            >
+              {displayFileName}{isDirty ? ` • ${translate('unsaved')}` : ''}
+            </button>
           )}
-        </button>
-      </div>
+        </div>
+
+        {isDesktopApp ? (
+          <div />
+        ) : (
+          <div className="flex items-center justify-self-end gap-1">
+            <TopbarActionButton
+              onClick={() => void handleOpenFile()}
+              title={translate('openFileTooltip')}
+            >
+              <FolderOpen size={18} strokeWidth={1.85} />
+            </TopbarActionButton>
+            <TopbarActionButton
+              onClick={() => void handleSaveFile()}
+              title={translate('saveFileTooltip')}
+              active={isDirty}
+            >
+              <Save size={18} strokeWidth={1.85} />
+            </TopbarActionButton>
+            <TopbarActionButton
+              onClick={() => setShowSettings(!showSettings)}
+              title={translate('settingsTooltip')}
+              active={showSettings}
+            >
+              <Settings2 size={18} strokeWidth={1.85} />
+            </TopbarActionButton>
+            <TopbarActionButton
+              onClick={() => handleModeChange(mode === 'wysiwyg' ? 'raw' : 'wysiwyg')}
+              title={mode === 'wysiwyg' ? translate('switchToSourceMode') : translate('switchToPreviewMode')}
+            >
+              {mode === 'wysiwyg' ? (
+                <SquarePen size={18} strokeWidth={1.85} />
+              ) : (
+                <Eye size={18} strokeWidth={1.85} />
+              )}
+            </TopbarActionButton>
+          </div>
+        )}
+      </header>
 
       {/* Settings Panel */}
       {showSettings && (
-        <div className="absolute top-20 right-8 z-[110] bg-md-surface shadow-2xl rounded-2xl border border-md-outlineVariant p-6 min-w-[280px] animate-in fade-in zoom-in duration-200">
-          <h3 className="text-sm font-bold uppercase tracking-widest text-md-primary mb-4">Editor Settings</h3>
+        <div className="absolute top-14 right-4 z-[110] bg-md-surface shadow-2xl rounded-2xl border border-md-outlineVariant p-6 min-w-[280px] animate-in fade-in zoom-in duration-200">
+          <h3 className="text-sm font-bold uppercase tracking-widest text-md-primary mb-4">{translate('editorSettings')}</h3>
           <div className="space-y-4">
             <div>
-              <label className="text-xs font-semibold text-md-onSurfaceVariant mb-2 block">Enter Key Behavior</label>
+              <label className="text-xs font-semibold text-md-onSurfaceVariant mb-2 block">{translate('file')}</label>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  onClick={() => void handleOpenFile()}
+                  className="px-3 py-2 text-xs rounded-xl bg-md-surfaceVariant/50 text-md-onSurfaceVariant hover:text-md-onSurface transition-colors"
+                >
+                  {translate('open')}
+                </button>
+                <button
+                  onClick={() => void handleSaveFile()}
+                  className={`px-3 py-2 text-xs rounded-xl transition-colors ${isDirty ? 'bg-md-primary/12 text-md-primary' : 'bg-md-surfaceVariant/50 text-md-onSurfaceVariant hover:text-md-onSurface'}`}
+                >
+                  {translate('save')}
+                </button>
+                <button
+                  onClick={() => void handleSaveFile({ saveAs: true })}
+                  className="px-3 py-2 text-xs rounded-xl bg-md-surfaceVariant/50 text-md-onSurfaceVariant hover:text-md-onSurface transition-colors"
+                >
+                  {translate('saveAs')}
+                </button>
+              </div>
+              <div className="mt-2 truncate text-[11px] uppercase tracking-[0.16em] text-md-onSurfaceVariant/70">
+                {currentFilePath ? currentFilePath : (window.typefreeDesktop ? translate('localFile') : translate('browserDocument'))}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-md-onSurfaceVariant mb-2 block">{translate('appearance')}</label>
+              <div className="flex bg-md-surfaceVariant/50 p-1 rounded-xl">
+                <button
+                  onClick={() => setThemeMode('light')}
+                  className={`flex-1 px-3 py-1.5 text-xs rounded-lg transition-all ${themeMode === 'light' ? 'bg-md-surface shadow-sm text-md-primary font-bold' : 'text-md-onSurfaceVariant hover:text-md-onSurface'}`}
+                >
+                  {translate('light')}
+                </button>
+                <button
+                  onClick={() => setThemeMode('dark')}
+                  className={`flex-1 px-3 py-1.5 text-xs rounded-lg transition-all ${themeMode === 'dark' ? 'bg-md-surface shadow-sm text-md-primary font-bold' : 'text-md-onSurfaceVariant hover:text-md-onSurface'}`}
+                >
+                  {translate('dark')}
+                </button>
+                <button
+                  onClick={() => setThemeMode('system')}
+                  className={`flex-1 px-3 py-1.5 text-xs rounded-lg transition-all ${themeMode === 'system' ? 'bg-md-surface shadow-sm text-md-primary font-bold' : 'text-md-onSurfaceVariant hover:text-md-onSurface'}`}
+                >
+                  {translate('system')}
+                </button>
+              </div>
+              <div className="mt-2 text-[11px] tracking-[0.08em] text-md-onSurfaceVariant/70">
+                {translate('activeTheme', { theme: translate(resolvedTheme) })}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-md-onSurfaceVariant mb-2 block">{translate('language')}</label>
+              <div className="flex bg-md-surfaceVariant/50 p-1 rounded-xl">
+                {(['zh', 'ja', 'en'] as AppLocale[]).map((nextLocale) => (
+                  <button
+                    key={nextLocale}
+                    onClick={() => setLocale(nextLocale)}
+                    className={`flex-1 px-3 py-1.5 text-xs rounded-lg transition-all ${locale === nextLocale ? 'bg-md-surface shadow-sm text-md-primary font-bold' : 'text-md-onSurfaceVariant hover:text-md-onSurface'}`}
+                  >
+                    {getLocaleLabel(locale, nextLocale)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-md-onSurfaceVariant mb-2 block">{translate('enterKeyBehavior')}</label>
               <div className="flex bg-md-surfaceVariant/50 p-1 rounded-xl">
                 <button 
                   onClick={() => setEnterMode('newline')}
                   className={`flex-1 px-3 py-1.5 text-xs rounded-lg transition-all ${enterMode === 'newline' ? 'bg-md-surface shadow-sm text-md-primary font-bold' : 'text-md-onSurfaceVariant hover:text-md-onSurface'}`}
                 >
-                  Newline
+                  {translate('newline')}
                 </button>
                 <button 
                   onClick={() => setEnterMode('paragraph')}
                   className={`flex-1 px-3 py-1.5 text-xs rounded-lg transition-all ${enterMode === 'paragraph' ? 'bg-md-surface shadow-sm text-md-primary font-bold' : 'text-md-onSurfaceVariant hover:text-md-onSurface'}`}
                 >
-                  Paragraph
+                  {translate('paragraph')}
                 </button>
               </div>
             </div>
 
             <div>
-              <label className="text-xs font-semibold text-md-onSurfaceVariant mb-2 block">Block Transition (WYSIWYG)</label>
+              <label className="text-xs font-semibold text-md-onSurfaceVariant mb-2 block">{translate('blockTransitionPreview')}</label>
               <div className="flex bg-md-surfaceVariant/50 p-1 rounded-xl">
                 <button 
                   onClick={() => setBlockTransition('smooth')}
                   className={`flex-1 px-3 py-1.5 text-xs rounded-lg transition-all ${blockTransition === 'smooth' ? 'bg-md-surface shadow-sm text-md-primary font-bold' : 'text-md-onSurfaceVariant hover:text-md-onSurface'}`}
                 >
-                  Smooth
+                  {translate('smooth')}
                 </button>
                 <button 
                   onClick={() => setBlockTransition('none')}
                   className={`flex-1 px-3 py-1.5 text-xs rounded-lg transition-all ${blockTransition === 'none' ? 'bg-md-surface shadow-sm text-md-primary font-bold' : 'text-md-onSurfaceVariant hover:text-md-onSurface'}`}
                 >
-                  None
+                  {translate('none')}
                 </button>
               </div>
             </div>
@@ -538,6 +1268,7 @@ export default function App() {
                       syncRef.current.offset = offset;
                     }}
                     focusInstruction={focusInstruction}
+                    theme={resolvedTheme}
                     transitionMode={blockTransition}
                   />
                 </div>
@@ -547,30 +1278,42 @@ export default function App() {
             </div>
           </div>
         ) : (
-          <div ref={sourceScrollContainerRef} className="flex-1 flex flex-col bg-md-surface overflow-y-auto hide-scrollbar pt-8 pb-[33vh]">
-            <div className="w-full flex min-h-full">
+          <div ref={sourceScrollContainerRef} className="flex-1 flex flex-col bg-md-surface overflow-auto hide-scrollbar pt-8 pb-[33vh]">
+            <div className="inline-flex min-w-full min-h-full">
               {/* Line Numbers */}
-              <div className="w-12 flex-shrink-0 flex flex-col items-end pr-4 text-md-outline/40 font-mono text-sm select-none">
+              <div className="sticky left-0 z-10 w-12 flex-shrink-0 flex flex-col items-end pr-4 text-md-outline/40 font-mono text-sm select-none bg-md-surface">
                 {rawContent.split('\n').map((_, i) => (
                   <div key={i} className="h-6 flex items-center justify-end leading-6">{i + 1}</div>
                 ))}
               </div>
               
               {/* Content Area */}
-              <div className="flex-1 relative grid">
+              <div className="relative inline-grid min-w-full" style={{ width: sourceCanvasWidth }}>
                 {/* Mirror Div for Auto-Height */}
                 <div 
-                  className="invisible whitespace-pre-wrap break-words font-mono text-sm leading-6 p-0 pl-4 pointer-events-none"
-                  style={{ gridArea: '1 / 1 / 2 / 2' }}
+                  className="invisible inline-block min-w-full whitespace-pre font-mono text-sm leading-6 p-0 pl-4 pr-8 pointer-events-none"
+                  style={{ gridArea: '1 / 1 / 2 / 2', width: sourceCanvasWidth }}
                 >
                   {rawContent + (rawContent.endsWith('\n') ? ' ' : '\n')}
                 </div>
                 <textarea
                   ref={sourceEditorRef}
                   value={rawContent}
-                  onChange={(e) => setRawContent(e.target.value)}
-                  className="w-full h-full bg-transparent resize-none outline-none text-md-onSurface font-mono text-sm leading-6 p-0 pl-4 whitespace-pre-wrap break-words overflow-hidden"
-                  style={{ gridArea: '1 / 1 / 2 / 2' }}
+                  onChange={(e) => {
+                    commitRawContent(e.target.value);
+                    syncFromSourceOffset(e.target.selectionStart);
+                  }}
+                  onSelect={(e) => {
+                    syncFromSourceOffset((e.target as HTMLTextAreaElement).selectionStart);
+                  }}
+                  onKeyUp={(e) => {
+                    syncFromSourceOffset((e.target as HTMLTextAreaElement).selectionStart);
+                  }}
+                  onMouseUp={(e) => {
+                    syncFromSourceOffset((e.target as HTMLTextAreaElement).selectionStart);
+                  }}
+                  className="min-w-full h-full bg-transparent resize-none outline-none text-md-onSurface font-mono text-sm leading-6 p-0 pl-4 pr-8 whitespace-pre overflow-hidden"
+                  style={{ gridArea: '1 / 1 / 2 / 2', width: sourceCanvasWidth }}
                   spellCheck={false}
                 />
               </div>

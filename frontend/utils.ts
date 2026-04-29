@@ -1,6 +1,5 @@
 import { marked } from 'marked';
 import hljs from 'highlight.js';
-import 'highlight.js/styles/github.css';
 import type { BlockData } from './types';
 
 export { marked };
@@ -94,6 +93,324 @@ export const getCursorFromGlobalOffset = (blocks: BlockData[], globalOffset: num
 
   const lastBlock = blocks[blocks.length - 1];
   return { blockId: lastBlock.id, offset: lastBlock.raw.length };
+};
+
+interface RenderedTextProjection {
+  text: string;
+  map: number[];
+}
+
+interface PointToOffsetOptions {
+  edgeThreshold?: number;
+  horizontalPadding?: number;
+  verticalPadding?: number;
+}
+
+const buildDirectProjection = (text: string, startOffset: number): RenderedTextProjection => ({
+  text,
+  map: Array.from({ length: text.length + 1 }, (_, index) => startOffset + index)
+});
+
+const buildLinearProjection = (
+  text: string,
+  rawStart: number,
+  rawEnd: number
+): RenderedTextProjection => {
+  if (!text) {
+    return { text: '', map: [rawEnd] };
+  }
+
+  const rawSpan = Math.max(0, rawEnd - rawStart);
+  const map = [rawStart];
+
+  for (let index = 1; index <= text.length; index++) {
+    const nextOffset = rawStart + Math.round((index / text.length) * rawSpan);
+    map.push(Math.min(rawEnd, nextOffset));
+  }
+
+  return { text, map };
+};
+
+const concatProjections = (
+  parts: RenderedTextProjection[],
+  fallbackOffset: number
+): RenderedTextProjection => {
+  let text = '';
+  let map = [fallbackOffset];
+
+  for (const part of parts) {
+    if (part.text.length === 0) {
+      map[map.length - 1] = part.map[part.map.length - 1];
+      continue;
+    }
+
+    text += part.text;
+    map = map.slice(0, -1).concat(part.map);
+  }
+
+  return { text, map };
+};
+
+const getVisibleText = (token: any): string => {
+  if (typeof token?.text === 'string') {
+    return token.text;
+  }
+
+  if (typeof token?.raw === 'string') {
+    return token.raw;
+  }
+
+  return '';
+};
+
+const escapeHtml = (text: string) => (
+  text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+);
+
+const getCodeFenceInfo = (raw: string) => {
+  const openingMatch = raw.match(/^([ \t]*)(`{3,}|~{3,})([^\n]*)/);
+  if (!openingMatch) {
+    return null;
+  }
+
+  const firstNewlineIndex = raw.indexOf('\n');
+  if (firstNewlineIndex === -1) {
+    return null;
+  }
+
+  const indent = openingMatch[1] ?? '';
+  const fence = openingMatch[2];
+  const closingPattern = new RegExp(`(?:^|\\n)${indent}${fence}[ \\t]*$`);
+  const closingMatch = raw.match(closingPattern);
+  const contentStart = firstNewlineIndex + 1;
+
+  if (!closingMatch || closingMatch.index === undefined || closingMatch.index < contentStart - 1) {
+    return {
+      content: raw.slice(contentStart),
+      contentStart,
+      contentEnd: raw.length
+    };
+  }
+
+  const closingIndex = closingMatch.index + (closingMatch[0].startsWith('\n') ? 1 : 0);
+  return {
+    content: raw.slice(contentStart, closingIndex),
+    contentStart,
+    contentEnd: closingIndex
+  };
+};
+
+const resolveCodeLanguage = (lang?: string) => {
+  if (lang && hljs.getLanguage(lang)) {
+    return lang;
+  }
+
+  return 'plaintext';
+};
+
+export const getCodeBlockPreview = (raw: string, lang?: string) => {
+  const fenceInfo = getCodeFenceInfo(raw);
+  const content = fenceInfo?.content ?? getVisibleText({ text: raw });
+  const language = resolveCodeLanguage(lang);
+  const highlightedLines = content.split('\n').map((line) => (
+    line ? hljs.highlight(line, { language }).value : ''
+  ));
+
+  return {
+    content,
+    contentStart: fenceInfo?.contentStart ?? 0,
+    contentEnd: fenceInfo?.contentEnd ?? raw.length,
+    highlightedLines,
+    languageLabel: lang?.trim() || ''
+  };
+};
+
+const projectNestedTokens = (
+  parentRaw: string,
+  parentStart: number,
+  tokens: any[]
+): RenderedTextProjection => {
+  let searchStart = 0;
+  const parts = tokens.map((token) => {
+    const childRaw = typeof token?.raw === 'string' ? token.raw : '';
+    const childIndex = childRaw ? parentRaw.indexOf(childRaw, searchStart) : -1;
+    const childStart = parentStart + (childIndex >= 0 ? childIndex : searchStart);
+
+    if (childIndex >= 0) {
+      searchStart = childIndex + childRaw.length;
+    }
+
+    return projectToken(token, childStart);
+  });
+
+  return concatProjections(parts, parentStart);
+};
+
+const projectToken = (token: any, tokenStart: number): RenderedTextProjection => {
+  const tokenRaw = typeof token?.raw === 'string' ? token.raw : '';
+  const tokenEnd = tokenStart + tokenRaw.length;
+
+  switch (token?.type) {
+    case 'space':
+    case 'hr':
+      return { text: '', map: [tokenEnd] };
+
+    case 'br':
+      return { text: '\n', map: [tokenStart, tokenEnd] };
+
+    case 'code':
+      if (typeof token?.raw === 'string') {
+        const preview = getCodeBlockPreview(token.raw, token.lang);
+        return buildDirectProjection(preview.content, tokenStart + preview.contentStart);
+      }
+      return buildLinearProjection(getVisibleText(token), tokenStart, tokenEnd);
+
+    case 'list': {
+      let searchStart = 0;
+      const parts: RenderedTextProjection[] = [];
+
+      for (const item of token.items || []) {
+        const itemRaw = typeof item?.raw === 'string' ? item.raw : '';
+        const itemIndex = itemRaw ? tokenRaw.indexOf(itemRaw, searchStart) : -1;
+        const itemStart = tokenStart + (itemIndex >= 0 ? itemIndex : searchStart);
+
+        if (itemIndex >= 0) {
+          searchStart = itemIndex + itemRaw.length;
+        }
+
+        parts.push(projectToken(item, itemStart));
+
+        if (item !== token.items[token.items.length - 1]) {
+          const boundary = itemStart + itemRaw.length;
+          parts.push({ text: '\n', map: [boundary, boundary] });
+        }
+      }
+
+      return concatProjections(parts, tokenStart);
+    }
+
+    case 'heading':
+    case 'paragraph':
+    case 'text':
+    case 'strong':
+    case 'em':
+    case 'link':
+    case 'blockquote':
+    case 'list_item':
+      if (Array.isArray(token.tokens) && token.tokens.length > 0) {
+        return projectNestedTokens(tokenRaw, tokenStart, token.tokens);
+      }
+      break;
+
+    default:
+      break;
+  }
+
+  const visibleText = getVisibleText(token);
+  const visibleIndex = visibleText ? tokenRaw.indexOf(visibleText) : -1;
+
+  if (visibleText && visibleIndex >= 0) {
+    return buildDirectProjection(visibleText, tokenStart + visibleIndex);
+  }
+
+  return buildLinearProjection(visibleText, tokenStart, tokenEnd);
+};
+
+export const buildRenderedTextProjection = (raw: string): RenderedTextProjection => {
+  const tokens = marked.lexer(raw);
+  let searchStart = 0;
+
+  const parts = tokens.map((token: any) => {
+    const tokenRaw = typeof token?.raw === 'string' ? token.raw : '';
+    const tokenIndex = tokenRaw ? raw.indexOf(tokenRaw, searchStart) : -1;
+    const tokenStart = tokenIndex >= 0 ? tokenIndex : searchStart;
+
+    if (tokenIndex >= 0) {
+      searchStart = tokenIndex + tokenRaw.length;
+    }
+
+    return projectToken(token, tokenStart);
+  });
+
+  return concatProjections(parts, 0);
+};
+
+export const getRawOffsetFromRenderedOffset = (raw: string, renderedOffset: number): number => {
+  const projection = buildRenderedTextProjection(raw);
+  const safeOffset = Math.max(0, Math.min(renderedOffset, projection.map.length - 1));
+  return projection.map[safeOffset] ?? raw.length;
+};
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(value, max));
+
+const getCaretPoint = (clientX: number, clientY: number) => {
+  const range = (document as any).caretRangeFromPoint?.(clientX, clientY);
+  if (range) {
+    return {
+      container: range.startContainer,
+      offset: range.startOffset
+    };
+  }
+
+  const position = (document as any).caretPositionFromPoint?.(clientX, clientY);
+  if (position) {
+    return {
+      container: position.offsetNode,
+      offset: position.offset
+    };
+  }
+
+  return null;
+};
+
+export const getRenderedOffsetFromPoint = (
+  container: HTMLElement,
+  clientX: number,
+  clientY: number,
+  options: PointToOffsetOptions = {}
+) => {
+  const rect = container.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) {
+    return 0;
+  }
+
+  const edgeThreshold = options.edgeThreshold ?? 16;
+  const horizontalPadding = options.horizontalPadding ?? 5;
+  const verticalPadding = options.verticalPadding ?? 1;
+  const safeX = clientX <= rect.left + edgeThreshold
+    ? rect.left - 1
+    : clientX >= rect.right - edgeThreshold
+      ? rect.right + 1
+      : clamp(clientX, rect.left + horizontalPadding, rect.right - horizontalPadding);
+  const safeY = clamp(clientY, rect.top + verticalPadding, rect.bottom - verticalPadding);
+  const point = getCaretPoint(safeX, safeY);
+
+  if (!point?.container || !container.contains(point.container)) {
+    return clientY <= rect.top ? 0 : container.textContent?.length ?? 0;
+  }
+
+  try {
+    const preRange = document.createRange();
+    preRange.selectNodeContents(container);
+    preRange.setEnd(point.container, point.offset);
+    return preRange.toString().length;
+  } catch {
+    return clientY <= rect.top ? 0 : container.textContent?.length ?? 0;
+  }
+};
+
+export const getRawOffsetFromPoint = (
+  raw: string,
+  container: HTMLElement,
+  clientX: number,
+  clientY: number,
+  options: PointToOffsetOptions = {}
+) => {
+  const renderedOffset = getRenderedOffsetFromPoint(container, clientX, clientY, options);
+  return getRawOffsetFromRenderedOffset(raw, renderedOffset);
 };
 
 export const rawToBlocks = (raw: string, prevBlocks: BlockData[] = []): BlockData[] => {
@@ -213,10 +530,10 @@ export const highlightMarkdownSyntax = (text: string, cursorPos: number | null =
   if (!text) return '';
   
   const isCodeBlock = text.trim().startsWith('```');
+  const wrap = (str: string) => `<span class="md-syntax-marker select-none">${str}</span>`;
 
   if (isCodeBlock) {
     const lines = text.split('\n');
-    const wrap = (str: string) => `<span class="opacity-30 text-md-outline select-none">${str}</span>`;
     
     const firstLineMatch = lines[0].match(/^(\s*```)(\w*)/);
     const lang = firstLineMatch ? firstLineMatch[2] : '';
@@ -236,7 +553,6 @@ export const highlightMarkdownSyntax = (text: string, cursorPos: number | null =
     return htmlLines.join('\n');
   }
 
-  const wrap = (str: string) => `<span class="opacity-30 text-md-outline select-none">${str}</span>`;
   let html = '';
   let lastIndex = 0;
   
