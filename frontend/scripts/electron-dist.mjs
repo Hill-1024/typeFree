@@ -14,7 +14,7 @@ const resolveBin = (name) => resolve(
 
 const viteBin = resolveBin('vite');
 const builderBin = resolveBin('electron-builder');
-const builderArgs = process.argv.slice(2);
+const builderArgs = process.argv.slice(2).filter((arg, index) => !(index === 0 && arg === '--'));
 
 const run = (command, args) => new Promise((resolvePromise, reject) => {
   const child = spawn(command, args, {

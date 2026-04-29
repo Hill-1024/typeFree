@@ -2,6 +2,8 @@
   "name": "typefree-frontend",
   "private": true,
   "version": "0.0.0",
+  "description": "TypeFree is an open-source, local-first Markdown editor with block-based WYSIWYG editing.",
+  "author": "Hill-1024 <3520363913@qq.com>",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
