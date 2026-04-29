@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, shell } from 'electron';
 import { basename, dirname, extname, join } from 'node:path';
 import { statSync } from 'node:fs';
 import { readFile, rename, stat, writeFile } from 'node:fs/promises';
@@ -8,6 +8,7 @@ import { getLocaleLabel, getTextFileFilters, normalizeLocale, translate } from '
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const APP_NAME = 'TypeFree';
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+const appIconPath = join(__dirname, '..', devServerUrl ? 'public' : 'dist', 'app-icon.png');
 const getWindowBackgroundColor = () => (nativeTheme.shouldUseDarkColors ? '#13161d' : '#ffffff');
 const getStartupLanguageTag = () => {
   const envLocale = [
@@ -483,6 +484,7 @@ const createWindow = async () => {
     minHeight: 720,
     autoHideMenuBar: false,
     backgroundColor: getWindowBackgroundColor(),
+    icon: appIconPath,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
@@ -660,6 +662,10 @@ app.on('open-file', (event, filePath) => {
 app.setName(APP_NAME);
 
 app.whenReady().then(async () => {
+  if (process.platform === 'darwin') {
+    app.dock.setIcon(nativeImage.createFromPath(appIconPath));
+  }
+
   ipcMain.on('document:update-state', (event, payload) => {
     const nextDocumentState = {
       dirty: Boolean(payload?.dirty),

@@ -14,6 +14,7 @@ const resolveBin = (name) => resolve(
 
 const viteBin = resolveBin('vite');
 const builderBin = resolveBin('electron-builder');
+const builderArgs = process.argv.slice(2);
 
 const run = (command, args) => new Promise((resolvePromise, reject) => {
   const child = spawn(command, args, {
@@ -33,4 +34,4 @@ const run = (command, args) => new Promise((resolvePromise, reject) => {
 });
 
 await run(viteBin, ['build']);
-await run(builderBin, []);
+await run(builderBin, builderArgs.length > 0 ? builderArgs : []);

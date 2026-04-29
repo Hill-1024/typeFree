@@ -10,6 +10,7 @@
     "dev:desktop": "node ./scripts/electron-dev.mjs",
     "build": "vite build",
     "build:web": "vite build",
+    "typecheck": "tsc --noEmit",
     "dist": "node ./scripts/electron-dist.mjs",
     "preview": "vite preview"
   },
@@ -34,7 +35,9 @@
   "build": {
     "appId": "com.hill.typefree",
     "productName": "TypeFree",
+    "icon": "build/icon",
     "directories": {
+      "buildResources": "build",
       "output": "release"
     },
     "files": [
@@ -43,11 +46,32 @@
       "package.json"
     ],
     "mac": {
+      "icon": "build/icon.icns",
       "category": "public.app-category.productivity",
       "target": [
         "dmg",
         "zip"
       ]
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis",
+        "zip"
+      ]
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "Office",
+      "target": [
+        "deb",
+        "zip"
+      ]
+    },
+    "nsis": {
+      "allowToChangeInstallationDirectory": true,
+      "oneClick": false,
+      "perMachine": false
     }
   }
 }
