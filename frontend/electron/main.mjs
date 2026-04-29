@@ -493,28 +493,29 @@ const createWindow = async () => {
       sandbox: true,
     },
   });
+  const browserWindowId = window.id;
+  const webContentsId = window.webContents.id;
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: 'deny' };
   });
 
-  editorWindowIds.add(window.id);
-  lastFocusedEditorWindowId = window.id;
+  editorWindowIds.add(browserWindowId);
+  lastFocusedEditorWindowId = browserWindowId;
 
   window.on('focus', () => {
-    lastFocusedEditorWindowId = window.id;
+    lastFocusedEditorWindowId = browserWindowId;
   });
 
-  applyWindowDocumentState(window, documentStateByWebContentsId.get(window.webContents.id));
+  applyWindowDocumentState(window, documentStateByWebContentsId.get(webContentsId));
 
   window.on('close', async (event) => {
-    const windowId = window.webContents.id;
-    if (closingWindowIds.has(windowId)) {
+    if (closingWindowIds.has(webContentsId)) {
       return;
     }
 
-    const documentState = documentStateByWebContentsId.get(windowId);
+    const documentState = documentStateByWebContentsId.get(webContentsId);
     if (!documentState?.dirty) {
       return;
     }
@@ -587,7 +588,7 @@ const createWindow = async () => {
             targetPath = saveResult.filePath;
           }
         } else {
-          closingWindowIds.add(windowId);
+          closingWindowIds.add(webContentsId);
           window.close();
           return;
         }
@@ -604,7 +605,7 @@ const createWindow = async () => {
         filePath: saveResult.filePath,
         fileName: saveResult.name
       };
-      documentStateByWebContentsId.set(windowId, nextDocumentState);
+      documentStateByWebContentsId.set(webContentsId, nextDocumentState);
       applyWindowDocumentState(window, nextDocumentState);
       await addRecentDocumentEntry(saveResult.filePath);
     } catch (error) {
@@ -617,18 +618,17 @@ const createWindow = async () => {
       return;
     }
 
-    closingWindowIds.add(windowId);
+    closingWindowIds.add(webContentsId);
     window.close();
   });
 
   window.on('closed', () => {
-    const windowId = window.webContents.id;
-    editorWindowIds.delete(window.id);
-    if (lastFocusedEditorWindowId === window.id) {
+    editorWindowIds.delete(browserWindowId);
+    if (lastFocusedEditorWindowId === browserWindowId) {
       lastFocusedEditorWindowId = null;
     }
-    closingWindowIds.delete(windowId);
-    documentStateByWebContentsId.delete(windowId);
+    closingWindowIds.delete(webContentsId);
+    documentStateByWebContentsId.delete(webContentsId);
   });
 
   if (devServerUrl) {
