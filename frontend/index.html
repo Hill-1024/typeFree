@@ -3,6 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:* http://localhost:* ws://localhost:*; worker-src 'self' blob:; object-src 'none'; base-uri 'self';"
+  >
   <title>typeFree</title>
   <link rel="icon" type="image/png" href="/app-icon.png">
   <script>
@@ -17,35 +21,6 @@
       document.documentElement.dataset.theme = resolvedTheme;
       document.documentElement.style.colorScheme = resolvedTheme;
     })();
-  </script>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: {
-            sans: ['var(--typefree-font-sans)'],
-          },
-          colors: {
-            md: {
-              surface: 'rgb(var(--md-surface) / <alpha-value>)',
-              onSurface: 'rgb(var(--md-on-surface) / <alpha-value>)',
-              surfaceVariant: 'rgb(var(--md-surface-variant) / <alpha-value>)',
-              onSurfaceVariant: 'rgb(var(--md-on-surface-variant) / <alpha-value>)',
-              primary: 'rgb(var(--md-primary) / <alpha-value>)',
-              onPrimary: 'rgb(var(--md-on-primary) / <alpha-value>)',
-              primaryContainer: 'rgb(var(--md-primary-container) / <alpha-value>)',
-              onPrimaryContainer: 'rgb(var(--md-on-primary-container) / <alpha-value>)',
-              outline: 'rgb(var(--md-outline) / <alpha-value>)',
-              outlineVariant: 'rgb(var(--md-outline-variant) / <alpha-value>)',
-              error: 'rgb(var(--md-error) / <alpha-value>)',
-              errorContainer: 'rgb(var(--md-error-container) / <alpha-value>)',
-              onErrorContainer: 'rgb(var(--md-on-error-container) / <alpha-value>)',
-            }
-          },
-        }
-      }
-    }
   </script>
   <link rel="stylesheet" href="/fonts/custom-fonts.css">
   <style>
@@ -159,9 +134,8 @@
     .md-render ul { list-style-type: disc; padding-left: 1.5em; margin: 0; }
     .md-render ol { list-style-type: decimal; padding-left: 1.5em; margin: 0; }
     .md-render li { margin: 0; }
-    .md-render pre, .md-render pre code, .md-render code { white-space: pre !important; word-break: normal !important; overflow-wrap: normal !important; width: fit-content; min-width: 100%; display: block; }
-    .md-render p code { display: inline; width: auto; min-width: 0; white-space: normal !important; } /* Restore inline code behavior */
-    .md-render code { background-color: rgb(var(--md-inline-code-bg)); padding: 0.2em 0.4em; border-radius: 0.25rem; font-family: monospace; font-size: 0.875em; color: rgb(var(--md-inline-code-text)); }
+    .md-render pre, .md-render pre code { white-space: pre !important; word-break: normal !important; overflow-wrap: normal !important; width: fit-content; min-width: 100%; display: block; }
+    .md-render code { display: inline; width: auto; min-width: 0; white-space: break-spaces; vertical-align: baseline; background-color: rgb(var(--md-inline-code-bg)); padding: 0.2em 0.4em; border-radius: 0.25rem; font-family: monospace; font-size: 0.875em; color: rgb(var(--md-inline-code-text)); }
     .md-render pre code { background-color: transparent; padding: 0; color: inherit; }
     .md-render blockquote { border: none; padding: 0; margin: 0; background: transparent; font-style: inherit; color: inherit; }
     .md-render a { color: rgb(var(--md-link)); text-decoration: none; position: relative; z-index: 20; }
@@ -282,23 +256,6 @@
       height: auto;
     }
   </style>
-  <script>
-    window.MathJax = {
-      tex: {
-        inlineMath: [['$', '$'], ['\\(', '\\)']],
-        displayMath: [['$$', '$$'], ['\\[', '\\]']],
-        processEscapes: true,
-        formatError: (jax, err) => { return 'ERR:' + err.message; }
-      },
-      options: {
-        skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
-      },
-      startup: {
-        typeset: false
-      }
-    };
-  </script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-chtml.min.js" id="MathJax-script" async></script>
   </head>
 <body class="bg-md-surface text-md-onSurface antialiased selection:bg-md-primaryContainer selection:text-md-onPrimaryContainer">
   <div id="root"></div>

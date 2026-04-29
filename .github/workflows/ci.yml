@@ -49,12 +49,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            label: Linux
-            platform: linux
-          - os: windows-latest
-            label: Windows
-            platform: win
           - os: macos-latest
             label: macOS
             platform: mac

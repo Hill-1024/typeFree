@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--typefree-font-sans);
+
+  --color-md-surface: rgb(var(--md-surface));
+  --color-md-onSurface: rgb(var(--md-on-surface));
+  --color-md-surfaceVariant: rgb(var(--md-surface-variant));
+  --color-md-onSurfaceVariant: rgb(var(--md-on-surface-variant));
+  --color-md-primary: rgb(var(--md-primary));
+  --color-md-onPrimary: rgb(var(--md-on-primary));
+  --color-md-primaryContainer: rgb(var(--md-primary-container));
+  --color-md-onPrimaryContainer: rgb(var(--md-on-primary-container));
+  --color-md-outline: rgb(var(--md-outline));
+  --color-md-outlineVariant: rgb(var(--md-outline-variant));
+  --color-md-error: rgb(var(--md-error));
+  --color-md-errorContainer: rgb(var(--md-error-container));
+  --color-md-onErrorContainer: rgb(var(--md-on-error-container));
+}

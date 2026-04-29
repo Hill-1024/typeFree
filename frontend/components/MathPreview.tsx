@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import katex from 'katex';
 
 interface MathPreviewProps {
   code: string;
@@ -9,8 +10,8 @@ interface MathPreviewProps {
 const mathCache = new Map<string, string>();
 
 export const MathPreview: React.FC<MathPreviewProps> = ({ code, displayMode = false }) => {
-  const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string>('');
+  const [renderedHtml, setRenderedHtml] = useState<string>(mathCache.get(`${displayMode ? 'block' : 'inline'}:${code.trim()}`) || '');
   const cacheKey = `${displayMode ? 'block' : 'inline'}:${code.trim()}`;
   const lastValidHtml = useRef<string>(mathCache.get(cacheKey) || '');
 
@@ -18,66 +19,34 @@ export const MathPreview: React.FC<MathPreviewProps> = ({ code, displayMode = fa
     const trimmedCode = code.trim();
     if (!trimmedCode) {
       setError('');
-      if (containerRef.current) containerRef.current.innerHTML = '';
+      setRenderedHtml('');
       return;
     }
 
-    // Immediate update from cache if available
     if (mathCache.has(cacheKey)) {
       const cached = mathCache.get(cacheKey)!;
-      if (containerRef.current) containerRef.current.innerHTML = cached;
+      setRenderedHtml(cached);
       lastValidHtml.current = cached;
       setError('');
       return;
     }
 
-    let isMounted = true;
-    
-    const renderMath = async () => {
-      if (!isMounted) return;
+    try {
+      const html = katex.renderToString(trimmedCode, {
+        displayMode,
+        throwOnError: true,
+        output: 'htmlAndMathml',
+        strict: 'warn'
+      });
 
-      if ((window as any).MathJax && (window as any).MathJax.tex2chtmlPromise) {
-        const mj = (window as any).MathJax;
-        
-        try {
-          const node = await mj.tex2chtmlPromise(trimmedCode, { display: displayMode });
-          if (isMounted) {
-            // Check for our custom error prefix
-            if (node.innerText && node.innerText.startsWith('ERR:')) {
-              throw new Error(node.innerText.substring(4));
-            }
-
-            // We need the HTML string to cache it
-            const tempDiv = document.createElement('div');
-            tempDiv.appendChild(node);
-            const html = tempDiv.innerHTML;
-            
-            mathCache.set(cacheKey, html);
-            if (containerRef.current) containerRef.current.innerHTML = html;
-            lastValidHtml.current = html;
-            setError('');
-            
-            mj.startup.document.clear();
-            mj.startup.document.updateDocument();
-          }
-        } catch (err: any) {
-          if (isMounted) {
-            setError(err.message || String(err));
-            // Keep the last valid HTML visible
-            if (containerRef.current) containerRef.current.innerHTML = lastValidHtml.current;
-          }
-        }
-      } else {
-        // MathJax not ready, retry soon
-        setTimeout(renderMath, 100);
-      }
-    };
-    
-    const timeoutId = setTimeout(renderMath, 300); // 300ms debounce
-    return () => { 
-      isMounted = false; 
-      clearTimeout(timeoutId);
-    };
+      mathCache.set(cacheKey, html);
+      lastValidHtml.current = html;
+      setRenderedHtml(html);
+      setError('');
+    } catch (err: any) {
+      setError(err.message || String(err));
+      setRenderedHtml(lastValidHtml.current);
+    }
   }, [cacheKey, code, displayMode]);
 
   const [displayError, setDisplayError] = useState<string>('');
@@ -102,7 +71,7 @@ export const MathPreview: React.FC<MathPreviewProps> = ({ code, displayMode = fa
           </div>
         </div>
         <div 
-          ref={containerRef} 
+          dangerouslySetInnerHTML={{ __html: renderedHtml }}
           className={`flex justify-center items-center w-full overflow-x-auto py-2 transition-opacity duration-300 ${error ? 'opacity-50' : 'opacity-100'}`} 
         />
       </div>
@@ -111,7 +80,7 @@ export const MathPreview: React.FC<MathPreviewProps> = ({ code, displayMode = fa
 
   return (
     <span className="inline-relative">
-      <span ref={containerRef} className="inline" />
+      <span className="inline" dangerouslySetInnerHTML={{ __html: renderedHtml }} />
       {error && (
         <span className="text-md-onErrorContainer font-mono text-[10px] ml-1 px-1 bg-md-errorContainer/80 rounded border border-md-error/20">
           !

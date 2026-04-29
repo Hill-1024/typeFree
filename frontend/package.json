@@ -1,7 +1,7 @@
 {
   "name": "typefree-frontend",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.1",
   "description": "TypeFree is an open-source, local-first Markdown editor with block-based WYSIWYG editing.",
   "author": "Hill-1024 <3520363913@qq.com>",
   "homepage": "https://github.com/Hill-1024/typeFree",
@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "highlight.js": "latest",
+    "katex": "^0.16.45",
     "lucide-react": "latest",
     "marked": "latest",
     "marked-highlight": "latest",
@@ -32,6 +33,7 @@
     "react-dom": "latest"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.2.4",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",
@@ -61,28 +63,6 @@
         "dmg",
         "zip"
       ]
-    },
-    "win": {
-      "artifactName": "TypeFree_${version}_Windows_${arch}.${ext}",
-      "icon": "build/icon.ico",
-      "target": [
-        "nsis",
-        "zip"
-      ]
-    },
-    "linux": {
-      "artifactName": "TypeFree_${version}_Linux_${arch}.${ext}",
-      "icon": "build/icon.png",
-      "category": "Office",
-      "target": [
-        "deb",
-        "zip"
-      ]
-    },
-    "nsis": {
-      "allowToChangeInstallationDirectory": true,
-      "oneClick": false,
-      "perMachine": false
     }
   }
 }
