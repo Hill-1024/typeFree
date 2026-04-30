@@ -81,10 +81,10 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
-        run: pnpm --dir frontend install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Sync package version from tag
         shell: bash
@@ -100,14 +100,14 @@ jobs:
           NODE
 
       - name: Type check
-        run: pnpm --dir frontend run typecheck
+        run: pnpm run typecheck
 
       - name: Build web bundle
-        run: pnpm --dir frontend run build:web
+        run: pnpm run build:web
 
       - name: Build release artifacts
         shell: bash
-        run: pnpm --dir frontend run dist -- ${{ matrix.dist_args }}
+        run: pnpm run dist -- ${{ matrix.dist_args }}
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4

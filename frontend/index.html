@@ -8,7 +8,7 @@
     content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:* http://localhost:* ws://localhost:*; worker-src 'self' blob:; object-src 'none'; base-uri 'self';"
   >
   <title>typeFree</title>
-  <link rel="icon" type="image/png" href="/app-icon.png">
+  <link rel="icon" type="image/png" href="%BASE_URL%app-icon.png">
   <script>
     (() => {
       const storageKey = 'typefree-theme-mode';
@@ -22,7 +22,7 @@
       document.documentElement.style.colorScheme = resolvedTheme;
     })();
   </script>
-  <link rel="stylesheet" href="/fonts/custom-fonts.css">
+  <link rel="stylesheet" href="%BASE_URL%fonts/custom-fonts.css">
   <style>
     :root {
       --typefree-font-sans: var(--typefree-custom-font-sans, "Google Sans"), "Product Sans", "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
