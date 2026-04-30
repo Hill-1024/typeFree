@@ -77,6 +77,7 @@ type TypefreeMenuActionPayload = TypefreeMenuActionPayloadMap[keyof TypefreeMenu
 interface TypefreeDesktopAPI {
   isDesktop: true;
   platform: string;
+  getInitialLocale: () => AppLocale;
   getSystemTheme: () => 'light' | 'dark';
   openFile: () => Promise<TypefreeOpenFileResult>;
   renameFile: (payload: TypefreeRenameFilePayload) => Promise<TypefreeRenameFileResult>;

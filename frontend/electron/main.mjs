@@ -10,28 +10,18 @@ const APP_NAME = 'TypeFree';
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const appIconPath = join(__dirname, '..', devServerUrl ? 'public' : 'dist', 'app-icon.png');
 const getWindowBackgroundColor = () => (nativeTheme.shouldUseDarkColors ? '#13161d' : '#ffffff');
-const getStartupLanguageTag = () => {
-  const envLocale = [
-    process.env.LC_ALL,
-    process.env.LC_MESSAGES,
-    process.env.LANG,
-    Intl.DateTimeFormat().resolvedOptions().locale
-  ].find((value) => typeof value === 'string' && value.length > 0);
+const getPreferredSystemLocale = () => {
+  const preferredSystemLocales = typeof app.getPreferredSystemLanguages === 'function'
+    ? app.getPreferredSystemLanguages()
+    : [];
+  const preferredLocale = Array.isArray(preferredSystemLocales)
+    ? preferredSystemLocales.find((value) => typeof value === 'string' && value.length > 0)
+    : null;
 
-  const normalized = String(envLocale ?? '').replace('.UTF-8', '').replace('.utf8', '').replace('_', '-').toLowerCase();
-  if (normalized.startsWith('zh')) {
-    return 'zh-CN';
-  }
-  if (normalized.startsWith('ja')) {
-    return 'ja';
-  }
-  if (normalized.startsWith('en')) {
-    return 'en-US';
-  }
-  return 'zh-CN';
+  return preferredLocale ?? app.getLocale();
 };
 const getInitialLocale = () => {
-  const locale = app.getLocale().toLowerCase();
+  const locale = getPreferredSystemLocale().toLowerCase();
   if (locale.startsWith('zh')) {
     return 'zh';
   }
@@ -40,9 +30,7 @@ const getInitialLocale = () => {
   }
   return 'en';
 };
-const getSystemUiLocale = () => normalizeLocale(app.getLocale());
-
-app.commandLine.appendSwitch('lang', getStartupLanguageTag());
+const getSystemUiLocale = () => normalizeLocale(getPreferredSystemLocale());
 
 const recentDocumentsStorePath = join(app.getPath('userData'), 'recent-documents.json');
 const documentStateByWebContentsId = new Map();
@@ -52,12 +40,13 @@ const pendingOpenPaths = [];
 let recentDocuments = [];
 let lastFocusedEditorWindowId = null;
 let editorUiState = {
-  locale: getInitialLocale(),
+  locale: null,
   themeMode: 'system',
   enterMode: 'paragraph',
   blockTransition: 'smooth',
   viewMode: 'wysiwyg'
 };
+const getUiLocale = () => normalizeLocale(editorUiState.locale || getSystemUiLocale());
 
 const getTargetWindow = () => {
   if (typeof lastFocusedEditorWindowId === 'number') {
@@ -289,107 +278,107 @@ async function openDocumentInWindow(filePath, targetWindow = getTargetWindow()) 
 
 const buildApplicationMenu = () => {
   const { locale, themeMode, enterMode, blockTransition, viewMode } = editorUiState;
-  const systemLocale = getSystemUiLocale();
+  const uiLocale = getUiLocale();
   const template = [
     ...(process.platform === 'darwin'
       ? [{
           label: APP_NAME,
           submenu: [
-            { label: translate(systemLocale, 'about'), role: 'about' },
+            { label: translate(uiLocale, 'about'), role: 'about' },
             { type: 'separator' },
-            { label: translate(systemLocale, 'services'), role: 'services' },
+            { label: translate(uiLocale, 'services'), role: 'services' },
             { type: 'separator' },
-            { label: translate(systemLocale, 'hide'), role: 'hide' },
-            { label: translate(systemLocale, 'hideOthers'), role: 'hideOthers' },
-            { label: translate(systemLocale, 'unhide'), role: 'unhide' },
+            { label: translate(uiLocale, 'hide'), role: 'hide' },
+            { label: translate(uiLocale, 'hideOthers'), role: 'hideOthers' },
+            { label: translate(uiLocale, 'unhide'), role: 'unhide' },
             { type: 'separator' },
-            { label: translate(systemLocale, 'quit'), role: 'quit' }
+            { label: translate(uiLocale, 'quit'), role: 'quit' }
           ]
         }]
       : []),
     {
-      label: translate(systemLocale, 'file'),
+      label: translate(uiLocale, 'file'),
       submenu: [
         {
-          label: translate(systemLocale, 'newDocument'),
+          label: translate(uiLocale, 'newDocument'),
           accelerator: 'CmdOrCtrl+N',
           click: () => sendMenuAction('new-file')
         },
         { type: 'separator' },
         {
-          label: translate(systemLocale, 'open'),
+          label: translate(uiLocale, 'open'),
           accelerator: 'CmdOrCtrl+O',
           click: () => sendMenuAction('open-file')
         },
-        getRecentSubmenuTemplate(systemLocale),
+        getRecentSubmenuTemplate(uiLocale),
         { type: 'separator' },
         {
-          label: translate(systemLocale, 'save'),
+          label: translate(uiLocale, 'save'),
           accelerator: 'CmdOrCtrl+S',
           click: () => sendMenuAction('save-file')
         },
         {
-          label: translate(systemLocale, 'saveAs'),
+          label: translate(uiLocale, 'saveAs'),
           accelerator: 'CmdOrCtrl+Shift+S',
           click: () => sendMenuAction('save-file-as')
         },
         { type: 'separator' },
         ...(process.platform === 'darwin'
-          ? [{ label: translate(systemLocale, 'close'), role: 'close' }]
-          : [{ label: translate(systemLocale, 'quit'), role: 'quit' }])
+          ? [{ label: translate(uiLocale, 'close'), role: 'close' }]
+          : [{ label: translate(uiLocale, 'quit'), role: 'quit' }])
       ]
     },
     {
-      label: translate(systemLocale, 'edit'),
+      label: translate(uiLocale, 'edit'),
       submenu: [
-        { label: translate(systemLocale, 'undo'), role: 'undo' },
-        { label: translate(systemLocale, 'redo'), role: 'redo' },
+        { label: translate(uiLocale, 'undo'), role: 'undo' },
+        { label: translate(uiLocale, 'redo'), role: 'redo' },
         { type: 'separator' },
-        { label: translate(systemLocale, 'cut'), role: 'cut' },
-        { label: translate(systemLocale, 'copy'), role: 'copy' },
-        { label: translate(systemLocale, 'paste'), role: 'paste' },
-        { label: translate(systemLocale, 'delete'), role: 'delete' },
-        { label: translate(systemLocale, 'selectAll'), role: 'selectAll' }
+        { label: translate(uiLocale, 'cut'), role: 'cut' },
+        { label: translate(uiLocale, 'copy'), role: 'copy' },
+        { label: translate(uiLocale, 'paste'), role: 'paste' },
+        { label: translate(uiLocale, 'delete'), role: 'delete' },
+        { label: translate(uiLocale, 'selectAll'), role: 'selectAll' }
       ]
     },
     {
-      label: translate(systemLocale, 'view'),
+      label: translate(uiLocale, 'view'),
       submenu: [
         {
-          label: translate(systemLocale, 'sourceMode'),
+          label: translate(uiLocale, 'sourceMode'),
           type: 'checkbox',
           checked: viewMode === 'raw',
           accelerator: 'CmdOrCtrl+\\',
           click: (menuItem) => sendMenuAction('set-source-mode', { enabled: menuItem.checked })
         },
         { type: 'separator' },
-        { label: translate(systemLocale, 'resetZoom'), role: 'resetZoom' },
-        { label: translate(systemLocale, 'zoomIn'), role: 'zoomIn' },
-        { label: translate(systemLocale, 'zoomOut'), role: 'zoomOut' },
+        { label: translate(uiLocale, 'resetZoom'), role: 'resetZoom' },
+        { label: translate(uiLocale, 'zoomIn'), role: 'zoomIn' },
+        { label: translate(uiLocale, 'zoomOut'), role: 'zoomOut' },
         { type: 'separator' },
-        { label: translate(systemLocale, 'fullScreen'), role: 'togglefullscreen' }
+        { label: translate(uiLocale, 'fullScreen'), role: 'togglefullscreen' }
       ]
     },
     {
-      label: translate(systemLocale, 'settings'),
+      label: translate(uiLocale, 'settings'),
       submenu: [
         {
-          label: translate(systemLocale, 'appearance'),
+          label: translate(uiLocale, 'appearance'),
           submenu: [
             {
-              label: translate(systemLocale, 'light'),
+              label: translate(uiLocale, 'light'),
               type: 'radio',
               checked: themeMode === 'light',
               click: () => sendMenuAction('set-theme-light')
             },
             {
-              label: translate(systemLocale, 'dark'),
+              label: translate(uiLocale, 'dark'),
               type: 'radio',
               checked: themeMode === 'dark',
               click: () => sendMenuAction('set-theme-dark')
             },
             {
-              label: translate(systemLocale, 'system'),
+              label: translate(uiLocale, 'system'),
               type: 'radio',
               checked: themeMode === 'system',
               click: () => sendMenuAction('set-theme-system')
@@ -397,22 +386,22 @@ const buildApplicationMenu = () => {
           ]
         },
         {
-          label: translate(systemLocale, 'language'),
+          label: translate(uiLocale, 'language'),
           submenu: [
             {
-              label: getLocaleLabel(systemLocale, 'en'),
+              label: getLocaleLabel(uiLocale, 'en'),
               type: 'radio',
               checked: locale === 'en',
               click: () => sendMenuAction('set-locale', { locale: 'en' })
             },
             {
-              label: getLocaleLabel(systemLocale, 'zh'),
+              label: getLocaleLabel(uiLocale, 'zh'),
               type: 'radio',
               checked: locale === 'zh',
               click: () => sendMenuAction('set-locale', { locale: 'zh' })
             },
             {
-              label: getLocaleLabel(systemLocale, 'ja'),
+              label: getLocaleLabel(uiLocale, 'ja'),
               type: 'radio',
               checked: locale === 'ja',
               click: () => sendMenuAction('set-locale', { locale: 'ja' })
@@ -420,16 +409,16 @@ const buildApplicationMenu = () => {
           ]
         },
         {
-          label: translate(systemLocale, 'enterKeyBehavior'),
+          label: translate(uiLocale, 'enterKeyBehavior'),
           submenu: [
             {
-              label: translate(systemLocale, 'newline'),
+              label: translate(uiLocale, 'newline'),
               type: 'radio',
               checked: enterMode === 'newline',
               click: () => sendMenuAction('set-enter-mode-newline')
             },
             {
-              label: translate(systemLocale, 'paragraph'),
+              label: translate(uiLocale, 'paragraph'),
               type: 'radio',
               checked: enterMode === 'paragraph',
               click: () => sendMenuAction('set-enter-mode-paragraph')
@@ -437,16 +426,16 @@ const buildApplicationMenu = () => {
           ]
         },
         {
-          label: translate(systemLocale, 'blockTransition'),
+          label: translate(uiLocale, 'blockTransition'),
           submenu: [
             {
-              label: translate(systemLocale, 'smooth'),
+              label: translate(uiLocale, 'smooth'),
               type: 'radio',
               checked: blockTransition === 'smooth',
               click: () => sendMenuAction('set-block-transition-smooth')
             },
             {
-              label: translate(systemLocale, 'none'),
+              label: translate(uiLocale, 'none'),
               type: 'radio',
               checked: blockTransition === 'none',
               click: () => sendMenuAction('set-block-transition-none')
@@ -456,18 +445,18 @@ const buildApplicationMenu = () => {
       ]
     },
     {
-      label: translate(systemLocale, 'window'),
+      label: translate(uiLocale, 'window'),
       submenu: [
-        { label: translate(systemLocale, 'minimize'), role: 'minimize' },
-        { label: translate(systemLocale, 'zoom'), role: 'zoom' },
+        { label: translate(uiLocale, 'minimize'), role: 'minimize' },
+        { label: translate(uiLocale, 'zoom'), role: 'zoom' },
         ...(process.platform === 'darwin'
           ? [
               { type: 'separator' },
-              { label: translate(systemLocale, 'front'), role: 'front' }
+              { label: translate(uiLocale, 'front'), role: 'front' }
             ]
           : [
               { type: 'separator' },
-              { label: translate(systemLocale, 'close'), role: 'close' }
+              { label: translate(uiLocale, 'close'), role: 'close' }
             ])
       ]
     }
@@ -521,7 +510,7 @@ const createWindow = async () => {
     }
 
     event.preventDefault();
-    const locale = getSystemUiLocale();
+    const locale = getUiLocale();
     try {
       const payload = {
         content: documentState.content ?? '',
@@ -662,6 +651,11 @@ app.on('open-file', (event, filePath) => {
 app.setName(APP_NAME);
 
 app.whenReady().then(async () => {
+  editorUiState = {
+    ...editorUiState,
+    locale: getInitialLocale()
+  };
+
   if (process.platform === 'darwin') {
     app.dock.setIcon(nativeImage.createFromPath(appIconPath));
   }
@@ -707,7 +701,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('file:open', async () => {
     const targetWindow = getTargetWindow();
-    const locale = getSystemUiLocale();
+    const locale = getUiLocale();
     const result = await dialog.showOpenDialog(targetWindow, {
       filters: getTextFileFilters(locale),
       properties: ['openFile']
@@ -759,9 +753,13 @@ app.whenReady().then(async () => {
     return renameResult;
   });
 
+  ipcMain.on('locale:get-initial-sync', (event) => {
+    event.returnValue = getInitialLocale();
+  });
+
   ipcMain.handle('file:save', async (_event, payload) => {
     const targetWindow = getTargetWindow();
-    const locale = getSystemUiLocale();
+    const locale = getUiLocale();
     const {
       content,
       defaultPath,

@@ -16,11 +16,13 @@ const validMenuActions = new Set([
   'set-block-transition-none'
 ]);
 
+const getInitialLocale = () => ipcRenderer.sendSync('locale:get-initial-sync');
 const getSystemTheme = () => ipcRenderer.sendSync('theme:get-system-sync');
 
 contextBridge.exposeInMainWorld('typefreeDesktop', {
   isDesktop: true,
   platform: process.platform,
+  getInitialLocale,
   getSystemTheme,
   openFile: () => ipcRenderer.invoke('file:open'),
   renameFile: (payload) => ipcRenderer.invoke('file:rename', payload),

@@ -229,6 +229,11 @@ export const getStoredLocale = (): AppLocale => {
     return stored;
   }
 
+  const desktopLocale = window.typefreeDesktop?.getInitialLocale?.();
+  if (desktopLocale === 'en' || desktopLocale === 'zh' || desktopLocale === 'ja') {
+    return desktopLocale;
+  }
+
   const systemLocales = Array.isArray(window.navigator.languages) && window.navigator.languages.length > 0
     ? window.navigator.languages
     : [window.navigator.language];
