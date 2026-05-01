@@ -1,6 +1,6 @@
 [package]
 name = "typefree"
-version = "0.2.1"
+version = "0.2.2"
 description = "TypeFree is an open-source, local-first Markdown editor with block-based WYSIWYG editing."
 authors = ["Hill-1024 <3520363913@qq.com>"]
 license = "MIT"
