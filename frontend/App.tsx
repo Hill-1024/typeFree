@@ -95,7 +95,7 @@ const TopbarActionButton = ({
 );
 
 export default function App() {
-  const isDesktopApp = Boolean(window.typefreeDesktop?.isDesktop) || /\bElectron\//.test(window.navigator.userAgent);
+  const isDesktopApp = Boolean(window.typefreeDesktop?.isDesktop);
   const [locale, setLocale] = useState<AppLocale>(() => getStoredLocale());
   const [mode, setMode] = useState<ViewMode>('wysiwyg');
   const [rawContent, setRawContent] = useState<string>(INITIAL_CONTENT);
@@ -123,6 +123,7 @@ export default function App() {
   const modeRef = useRef<ViewMode>('wysiwyg');
   const titleSelectOnFocusRef = useRef(false);
   const pendingBlockSelectAllRef = useRef<{ blockId: string | null; timestamp: number }>({ blockId: null, timestamp: 0 });
+  const closeRequestActiveRef = useRef(false);
 
   const blocksRef = useRef<BlockData[]>([]);
   const blocks = useMemo(() => {
@@ -200,6 +201,10 @@ export default function App() {
   }, [displayFileName, isRenamingTitle]);
 
   useEffect(() => {
+    if (window.typefreeDesktop?.isDesktop) {
+      return;
+    }
+
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       if (!isDirty) return;
       event.preventDefault();
@@ -410,13 +415,13 @@ export default function App() {
           saveAs
         });
 
-        if (result.canceled) return;
+        if (result.canceled) return false;
 
         setLastSavedContent(rawContent);
         setCurrentFilePath(result.filePath ?? null);
         setCurrentFileName(result.name || suggestedName);
         browserFileHandleRef.current = null;
-        return;
+        return true;
       }
 
       if (!saveAs && browserFileHandleRef.current) {
@@ -425,7 +430,7 @@ export default function App() {
         setLastSavedContent(rawContent);
         setCurrentFileName(file.name || suggestedName);
         setCurrentFilePath(null);
-        return;
+        return true;
       }
 
       const browserWindow = window as any;
@@ -442,9 +447,9 @@ export default function App() {
           setLastSavedContent(rawContent);
           setCurrentFileName(file.name || suggestedName);
           setCurrentFilePath(null);
-          return;
+          return true;
         } catch (error: any) {
-          if (error?.name === 'AbortError') return;
+          if (error?.name === 'AbortError') return false;
           throw error;
         }
       }
@@ -461,11 +466,54 @@ export default function App() {
       setLastSavedContent(rawContent);
       setCurrentFileName(suggestedName);
       setCurrentFilePath(null);
+      return true;
     } catch (error) {
       console.error(error);
       window.alert(translate('saveFailed'));
+      return false;
     }
   }, [currentFileName, currentFilePath, defaultFileName, filePickerTypes, rawContent, saveToBrowserHandle, translate]);
+
+  useEffect(() => {
+    if (!window.typefreeDesktop?.onCloseRequest) {
+      return;
+    }
+
+    return window.typefreeDesktop.onCloseRequest((event) => {
+      if (!isDirty) {
+        return;
+      }
+
+      event.preventDefault();
+
+      if (closeRequestActiveRef.current) {
+        return;
+      }
+
+      closeRequestActiveRef.current = true;
+      void (async () => {
+        try {
+          const decision = await window.typefreeDesktop?.confirmClose({
+            fileName: currentFileName || defaultFileName
+          });
+
+          if (decision === 'discard') {
+            await window.typefreeDesktop?.closeWindow();
+            return;
+          }
+
+          if (decision === 'save') {
+            const saved = await handleSaveFile();
+            if (saved) {
+              await window.typefreeDesktop?.closeWindow();
+            }
+          }
+        } finally {
+          closeRequestActiveRef.current = false;
+        }
+      })();
+    });
+  }, [currentFileName, defaultFileName, handleSaveFile, isDirty]);
 
   const beginTitleRename = useCallback(() => {
     titleSelectOnFocusRef.current = true;

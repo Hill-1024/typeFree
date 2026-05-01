@@ -1,7 +1,7 @@
 {
   "name": "typefree-frontend",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "TypeFree is an open-source, local-first Markdown editor with block-based WYSIWYG editing.",
   "author": "Hill-1024 <3520363913@qq.com>",
   "homepage": "https://github.com/Hill-1024/typeFree",
@@ -11,18 +11,18 @@
   },
   "license": "MIT",
   "type": "module",
-  "main": "electron/main.mjs",
   "scripts": {
     "dev": "vite",
     "dev:web": "vite --host 127.0.0.1",
-    "dev:desktop": "node ./scripts/electron-dev.mjs",
+    "dev:desktop": "tauri dev",
     "build": "vite build",
     "build:web": "vite build",
     "typecheck": "tsc --noEmit",
-    "dist": "node ./scripts/electron-dist.mjs",
+    "dist": "tauri build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.11.0",
     "highlight.js": "latest",
     "katex": "^0.16.45",
     "lucide-react": "latest",
@@ -34,35 +34,11 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.4",
+    "@tauri-apps/cli": "^2.11.0",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",
-    "electron": "latest",
-    "electron-builder": "latest",
     "typescript": "latest",
     "vite": "latest"
-  },
-  "build": {
-    "appId": "com.hill.typefree",
-    "productName": "TypeFree",
-    "icon": "build/icon",
-    "directories": {
-      "buildResources": "build",
-      "output": "release"
-    },
-    "files": [
-      "dist/**/*",
-      "electron/**/*",
-      "package.json"
-    ],
-    "mac": {
-      "artifactName": "TypeFree_${version}_macOS_${arch}.${ext}",
-      "icon": "build/icon.icns",
-      "category": "public.app-category.productivity",
-      "target": [
-        "dmg",
-        "zip"
-      ]
-    }
   }
 }

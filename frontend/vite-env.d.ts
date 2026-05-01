@@ -31,6 +31,16 @@ interface TypefreeRenameFileResult {
   name: string;
 }
 
+interface TypefreeCloseRequestEvent {
+  preventDefault: () => void;
+}
+
+interface TypefreeCloseConfirmPayload {
+  fileName: string;
+}
+
+type TypefreeCloseDecision = 'cancel' | 'discard' | 'save';
+
 interface TypefreeOpenDocumentPayload {
   content: string;
   filePath: string;
@@ -80,10 +90,13 @@ interface TypefreeDesktopAPI {
   getInitialLocale: () => AppLocale;
   getSystemTheme: () => 'light' | 'dark';
   openFile: () => Promise<TypefreeOpenFileResult>;
+  closeWindow: () => Promise<void>;
+  confirmClose: (payload: TypefreeCloseConfirmPayload) => Promise<TypefreeCloseDecision>;
   renameFile: (payload: TypefreeRenameFilePayload) => Promise<TypefreeRenameFileResult>;
   saveFile: (payload: TypefreeSaveFilePayload) => Promise<TypefreeSaveFileResult>;
   updateDocumentState: (payload: TypefreeDocumentStatePayload) => void;
   updateEditorUiState: (payload: TypefreeEditorUiStatePayload) => void;
+  onCloseRequest: (callback: (event: TypefreeCloseRequestEvent) => void | Promise<void>) => () => void;
   onMenuAction: (callback: (action: TypefreeMenuAction, payload?: TypefreeMenuActionPayload) => void) => () => void;
   onOpenDocumentRequest: (callback: (payload: TypefreeOpenDocumentPayload) => void) => () => void;
   onSystemThemeChange: (callback: (theme: 'light' | 'dark') => void) => () => void;

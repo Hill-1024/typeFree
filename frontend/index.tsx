@@ -1,8 +1,11 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { installTauriDesktopBridge } from './tauriDesktop';
 import 'katex/dist/katex.min.css';
 import './styles.css';
+
+installTauriDesktopBridge();
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

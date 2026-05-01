@@ -1,7 +1,7 @@
 {
   "name": "typefree",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "TypeFree repository workspace entrypoint.",
   "packageManager": "pnpm@10.33.2",
   "scripts": {
@@ -14,11 +14,5 @@
     "dist": "pnpm --dir frontend run dist",
     "dist:desktop": "pnpm --dir frontend run dist",
     "preview": "pnpm --dir frontend run preview"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron",
-      "electron-winstaller"
-    ]
   }
 }
