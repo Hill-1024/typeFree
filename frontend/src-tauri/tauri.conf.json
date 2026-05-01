@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "TypeFree",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "identifier": "com.hill.typefree",
   "build": {
     "frontendDist": "../dist",
@@ -33,6 +33,9 @@
       "app",
       "dmg"
     ],
+    "macOS": {
+      "signingIdentity": "-"
+    },
     "icon": [
       "../build/icon.png",
       "../build/icon.icns",
