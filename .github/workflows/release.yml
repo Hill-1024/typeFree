@@ -64,7 +64,7 @@ jobs:
           - os: macos-latest
             label: macOS
             artifact_name: release-macos
-            dist_args: --mac dmg zip --publish never
+            dist_args: --bundles app,dmg --ci
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -83,6 +83,14 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri -> target
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -93,27 +101,36 @@ jobs:
         run: |
           node <<'NODE'
           const fs = require('fs');
-          const packagePath = 'frontend/package.json';
-          const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
-          packageJson.version = process.env.RELEASE_VERSION;
-          fs.writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
+          const version = process.env.RELEASE_VERSION;
+          for (const packagePath of ['package.json', 'frontend/package.json']) {
+            const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+            packageJson.version = version;
+            fs.writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
+          }
+
+          const tauriConfigPath = 'frontend/src-tauri/tauri.conf.json';
+          const tauriConfig = JSON.parse(fs.readFileSync(tauriConfigPath, 'utf8'));
+          tauriConfig.version = version;
+          fs.writeFileSync(tauriConfigPath, `${JSON.stringify(tauriConfig, null, 2)}\n`);
+
+          const cargoPath = 'frontend/src-tauri/Cargo.toml';
+          const cargoToml = fs.readFileSync(cargoPath, 'utf8')
+            .replace(/^version = ".*"$/m, `version = "${version}"`);
+          fs.writeFileSync(cargoPath, cargoToml);
           NODE
 
       - name: Type check
         run: pnpm run typecheck
 
-      - name: Build web bundle
-        run: pnpm run build:web
-
       - name: Build release artifacts
         shell: bash
-        run: pnpm run dist -- ${{ matrix.dist_args }}
+        run: pnpm --dir frontend exec tauri build ${{ matrix.dist_args }}
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: frontend/release/**/*
+          path: frontend/src-tauri/target/release/bundle/dmg/**/*.dmg
           if-no-files-found: error
 
   publish:
@@ -133,7 +150,7 @@ jobs:
       - name: Verify packaged files
         shell: bash
         run: |
-          find release-assets -type f \( -name '*.zip' -o -name '*.dmg' \) | sort | tee release-files.txt
+          find release-assets -type f -name '*.dmg' | sort | tee release-files.txt
           test -s release-files.txt
 
       - name: Create or update GitHub release
@@ -143,5 +160,4 @@ jobs:
           target_commitish: ${{ needs.prepare.outputs.target_ref }}
           generate_release_notes: true
           files: |
-            release-assets/**/*.zip
             release-assets/**/*.dmg

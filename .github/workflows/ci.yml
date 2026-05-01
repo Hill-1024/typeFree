@@ -51,7 +51,6 @@ jobs:
         include:
           - os: macos-latest
             label: macOS
-            platform: mac
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -68,12 +67,16 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri -> target
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build app bundle
-        run: pnpm run build:web
-
       - name: Package desktop app smoke build
-        shell: bash
-        run: pnpm --dir frontend exec electron-builder --${{ matrix.platform }} dir --publish never
+        run: pnpm --dir frontend exec tauri build --bundles app --ci
