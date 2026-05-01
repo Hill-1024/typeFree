@@ -17,3 +17,18 @@
   --color-md-errorContainer: rgb(var(--md-error-container));
   --color-md-onErrorContainer: rgb(var(--md-on-error-container));
 }
+
+@keyframes typefree-empty-line-caret {
+  0%,
+  100% {
+    opacity: 0.95;
+  }
+
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.typefree-empty-line-caret {
+  animation: typefree-empty-line-caret 1.05s ease-in-out infinite;
+}

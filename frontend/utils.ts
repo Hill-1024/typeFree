@@ -496,6 +496,13 @@ export const rawToBlocks = (raw: string, prevBlocks: BlockData[] = []): BlockDat
     parsedBlocks.push({ raw: '', trailing: '' });
   }
 
+  if (
+    raw.endsWith('\n') &&
+    parsedBlocks[parsedBlocks.length - 1]?.raw !== ''
+  ) {
+    parsedBlocks.push({ raw: '', trailing: '' });
+  }
+
   // Map IDs using prefix/suffix diffing
   const result: BlockData[] = [];
   

@@ -60,6 +60,7 @@ export const Block = ({
   const isMathBlock = block.raw.trim().startsWith('$$') && block.raw.trim().endsWith('$$') && block.raw.trim().length >= 4;
   const isQuote = block.raw.trim().startsWith('>');
   const isList = /^[-*+]\s/.test(block.raw) || /^\d+\.\s/.test(block.raw);
+  const isEmptyPlainBlock = block.raw.length === 0 && !isCodeBlock && !isMathBlock;
 
   const mermaidCode = isMermaid ? block.raw.replace(/^```mermaid[ \t]*\n?/, '').replace(/\n?```[ \t]*$/, '') : '';
   const mathCode = isMathBlock ? block.raw.replace(/^\$\$[ \t]*\n?/, '').replace(/\n?\$\$[ \t]*$/, '') : '';
@@ -561,6 +562,7 @@ export const Block = ({
 
   const isCode = isCodeBlock || isMathBlock;
   const sharedStyles = `${typographyClass} w-full ${isCode ? 'whitespace-pre overflow-x-auto' : 'whitespace-pre-wrap break-words overflow-visible'} m-0 border-none box-border bg-transparent outline-none resize-none hide-scrollbar leading-relaxed`;
+  const textareaCaretClass = isEmptyPlainBlock ? 'caret-transparent' : 'caret-md-onSurface';
 
   if (isMermaid || isMathBlock) {
     return (
@@ -666,9 +668,15 @@ export const Block = ({
                   onCompositionEnd={handleCompositionEnd}
                   onKeyDown={handleLocalKeyDown}
                   onFocus={() => onActivate()}
-                  className={`${sharedStyles} hide-scrollbar absolute top-0 left-0 w-full h-full text-transparent caret-md-onSurface z-10`}
+                  className={`${sharedStyles} hide-scrollbar absolute top-0 left-0 w-full h-full text-transparent ${textareaCaretClass} z-10`}
                   spellCheck={false}
                 />
+                {isActive && isEmptyPlainBlock ? (
+                  <span
+                    className="typefree-empty-line-caret pointer-events-none absolute left-0 top-[0.2em] z-20 h-[1.25em] w-[2px] rounded-full bg-md-primary shadow-[0_0_0_1px_rgba(var(--md-surface),0.55)]"
+                    aria-hidden="true"
+                  />
+                ) : null}
               </div>
             </div>
           </div>
