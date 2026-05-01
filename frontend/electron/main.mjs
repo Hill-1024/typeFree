@@ -39,6 +39,7 @@ const editorWindowIds = new Set();
 const pendingOpenPaths = [];
 let recentDocuments = [];
 let lastFocusedEditorWindowId = null;
+let quitRequested = false;
 let editorUiState = {
   locale: null,
   themeMode: 'system',
@@ -511,6 +512,7 @@ const createWindow = async () => {
 
     event.preventDefault();
     const locale = getUiLocale();
+    const shouldQuitApplication = quitRequested;
     try {
       const payload = {
         content: documentState.content ?? '',
@@ -521,66 +523,55 @@ const createWindow = async () => {
 
       let targetPath = payload.filePath ?? null;
 
-      if (process.platform === 'darwin' && !targetPath) {
+      const response = await dialog.showMessageBox(window, {
+        type: 'warning',
+        buttons: [translate(locale, 'save'), translate(locale, 'dontSave'), translate(locale, 'cancel')],
+        defaultId: 0,
+        cancelId: 2,
+        message: translate(locale, 'savePromptMessage', {
+          fileName: documentState.fileName || translate(locale, 'untitled')
+        }),
+        detail: translate(locale, 'savePromptDetail')
+      });
+
+      if (response.response === 2) {
+        quitRequested = false;
+        return;
+      }
+
+      if (response.response === 0 && !targetPath) {
         const saveResult = await dialog.showSaveDialog(window, {
           defaultPath: payload.defaultPath,
           buttonLabel: translate(locale, 'save'),
-          message: translate(locale, 'savePromptMessage', {
-      fileName: documentState.fileName || translate(locale, 'untitled')
-          }),
-          nameFieldLabel: translate(locale, 'saveAsFieldLabel'),
-          filters: getTextFileFilters(locale)
+          ...(process.platform === 'darwin'
+            ? {
+                message: translate(locale, 'savePromptMessage', {
+                  fileName: documentState.fileName || translate(locale, 'untitled')
+                }),
+                nameFieldLabel: translate(locale, 'saveAsFieldLabel')
+              }
+            : {}),
+          filters: getTextFileFilters(locale),
+          ...(process.platform === 'linux' ? { properties: ['showOverwriteConfirmation'] } : {})
         });
 
         if (saveResult.canceled || !saveResult.filePath) {
+          quitRequested = false;
           return;
         }
 
         targetPath = saveResult.filePath;
-      } else {
-        const response = await dialog.showMessageBox(window, {
-          type: 'warning',
-          buttons: [translate(locale, 'save'), translate(locale, 'dontSave'), translate(locale, 'cancel')],
-          defaultId: 0,
-          cancelId: 2,
-          message: translate(locale, 'savePromptMessage', {
-            fileName: documentState.fileName || translate(locale, 'untitled')
-          }),
-          detail: translate(locale, 'savePromptDetail')
-        });
+      }
 
-        if (response.response === 2) {
+      if (response.response === 1) {
+        closingWindowIds.add(webContentsId);
+        if (shouldQuitApplication) {
+          window.destroy();
+          app.quit();
           return;
         }
-
-        if (response.response === 0) {
-          if (!targetPath) {
-            const saveResult = await dialog.showSaveDialog(window, {
-              defaultPath: payload.defaultPath,
-              buttonLabel: translate(locale, 'save'),
-              ...(process.platform === 'darwin'
-                ? {
-                    message: translate(locale, 'savePromptMessage', {
-                      fileName: documentState.fileName || translate(locale, 'untitled')
-                    }),
-                    nameFieldLabel: translate(locale, 'saveAsFieldLabel')
-                  }
-                : {}),
-              filters: getTextFileFilters(locale),
-              ...(process.platform === 'linux' ? { properties: ['showOverwriteConfirmation'] } : {})
-            });
-
-            if (saveResult.canceled || !saveResult.filePath) {
-              return;
-            }
-
-            targetPath = saveResult.filePath;
-          }
-        } else {
-          closingWindowIds.add(webContentsId);
-          window.close();
-          return;
-        }
+        window.close();
+        return;
       }
 
       const saveResult = await saveDocumentToPath({
@@ -599,6 +590,7 @@ const createWindow = async () => {
       await addRecentDocumentEntry(saveResult.filePath);
     } catch (error) {
       console.error(error);
+      quitRequested = false;
       await dialog.showMessageBox(window, {
         type: 'error',
         buttons: ['OK'],
@@ -608,6 +600,11 @@ const createWindow = async () => {
     }
 
     closingWindowIds.add(webContentsId);
+    if (shouldQuitApplication) {
+      window.destroy();
+      app.quit();
+      return;
+    }
     window.close();
   });
 
@@ -814,6 +811,14 @@ app.whenReady().then(async () => {
       void createWindow();
     }
   });
+});
+
+app.on('before-quit', () => {
+  quitRequested = true;
+});
+
+app.on('will-quit', () => {
+  quitRequested = false;
 });
 
 app.on('window-all-closed', () => {
