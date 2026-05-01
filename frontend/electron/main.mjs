@@ -48,6 +48,25 @@ let editorUiState = {
   viewMode: 'wysiwyg'
 };
 const getUiLocale = () => normalizeLocale(editorUiState.locale || getSystemUiLocale());
+const finalizeWindowClose = (window, webContentsId, shouldQuitApplication) => {
+  if (!window || window.isDestroyed()) {
+    if (shouldQuitApplication) {
+      setImmediate(() => {
+        app.quit();
+      });
+    }
+    return;
+  }
+
+  closingWindowIds.add(webContentsId);
+  window.destroy();
+
+  if (shouldQuitApplication) {
+    setImmediate(() => {
+      app.quit();
+    });
+  }
+};
 
 const getTargetWindow = () => {
   if (typeof lastFocusedEditorWindowId === 'number') {
@@ -564,13 +583,7 @@ const createWindow = async () => {
       }
 
       if (response.response === 1) {
-        closingWindowIds.add(webContentsId);
-        if (shouldQuitApplication) {
-          window.destroy();
-          app.quit();
-          return;
-        }
-        window.close();
+        finalizeWindowClose(window, webContentsId, shouldQuitApplication);
         return;
       }
 
@@ -599,13 +612,7 @@ const createWindow = async () => {
       return;
     }
 
-    closingWindowIds.add(webContentsId);
-    if (shouldQuitApplication) {
-      window.destroy();
-      app.quit();
-      return;
-    }
-    window.close();
+    finalizeWindowClose(window, webContentsId, shouldQuitApplication);
   });
 
   window.on('closed', () => {

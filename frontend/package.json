@@ -1,7 +1,7 @@
 {
   "name": "typefree-frontend",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "TypeFree is an open-source, local-first Markdown editor with block-based WYSIWYG editing.",
   "author": "Hill-1024 <3520363913@qq.com>",
   "homepage": "https://github.com/Hill-1024/typeFree",
