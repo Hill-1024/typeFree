@@ -1,7 +1,7 @@
 {
   "name": "typefree",
   "private": true,
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "TypeFree repository workspace entrypoint.",
   "packageManager": "pnpm@10.33.2",
   "scripts": {
