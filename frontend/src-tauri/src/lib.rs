@@ -1,11 +1,16 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+#[cfg(target_os = "macos")]
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashSet,
+};
 use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::Mutex,
+    sync::{mpsc::sync_channel, LazyLock, Mutex},
 };
 use tauri::{
     menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder},
@@ -15,6 +20,23 @@ use tauri_plugin_dialog::{
     DialogExt, FileDialogBuilder, FilePath, MessageDialogButtons, MessageDialogKind,
     MessageDialogResult,
 };
+
+#[cfg(target_os = "macos")]
+use block2::StackBlock;
+#[cfg(target_os = "macos")]
+use objc2::{
+    define_class, msg_send,
+    rc::{Allocated, Retained},
+    runtime::{AnyObject, NSObject, NSObjectProtocol},
+    sel, DefinedClass, MainThreadMarker, MainThreadOnly,
+};
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{
+    NSDocument, NSDocumentChangeType, NSDocumentController, NSModalResponseCancel,
+    NSModalResponseOK, NSSaveOperationType, NSSavePanel, NSWindow, NSWindowController,
+};
+#[cfg(target_os = "macos")]
+use objc2_foundation::{NSArray, NSData, NSError, NSString, NSURL};
 
 const APP_NAME: &str = "TypeFree";
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -26,6 +48,12 @@ enum AppLocale {
     En,
     Zh,
     Ja,
+}
+
+impl Default for AppLocale {
+    fn default() -> Self {
+        Self::Zh
+    }
 }
 
 #[derive(Clone)]
@@ -56,7 +84,7 @@ struct EditorUiStatePayload {
     view_mode: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SaveFilePayload {
     content: String,
@@ -75,7 +103,11 @@ struct RenameFilePayload {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ConfirmClosePayload {
+    content: String,
+    default_path: Option<String>,
     file_name: String,
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    file_path: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -99,6 +131,14 @@ struct OpenDocumentPayload {
 #[serde(rename_all = "camelCase")]
 struct SaveFileResult {
     canceled: bool,
+    file_path: Option<String>,
+    name: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfirmCloseResult {
+    action: String,
     file_path: Option<String>,
     name: Option<String>,
 }
@@ -136,6 +176,469 @@ impl AppState {
             recent_documents: Vec::new(),
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Default)]
+struct TypeFreeDocumentState {
+    content: RefCell<String>,
+    display_name: RefCell<String>,
+    suggested_name: RefCell<String>,
+    default_path: RefCell<Option<String>>,
+    locale: Cell<AppLocale>,
+}
+
+#[cfg(target_os = "macos")]
+struct MacosDocumentBridge {
+    document: Retained<TypeFreeCloseDocument>,
+    window_controller: Retained<NSWindowController>,
+}
+
+#[cfg(target_os = "macos")]
+struct MacosCloseContext {
+    app: AppHandle,
+    window_label: String,
+}
+
+#[cfg(target_os = "macos")]
+thread_local! {
+    static MACOS_DOCUMENT_BRIDGES: RefCell<HashMap<String, MacosDocumentBridge>> = RefCell::new(HashMap::new());
+    static MACOS_CLOSE_DELEGATE: RefCell<Option<Retained<TypeFreeCloseDelegate>>> = const { RefCell::new(None) };
+}
+
+#[cfg(target_os = "macos")]
+static MACOS_PENDING_CLOSES: LazyLock<Mutex<HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+#[cfg(target_os = "macos")]
+static MACOS_ALLOWED_CLOSES: LazyLock<Mutex<HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+#[cfg(target_os = "macos")]
+define_class!(
+    #[unsafe(super(NSDocument))]
+    #[name = "TypeFreeCloseDocument"]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = TypeFreeDocumentState]
+    struct TypeFreeCloseDocument;
+
+    impl TypeFreeCloseDocument {
+        #[unsafe(method_id(init))]
+        fn init(this: Allocated<Self>) -> Retained<Self> {
+            let this = this.set_ivars(TypeFreeDocumentState::default());
+            unsafe { msg_send![super(this), init] }
+        }
+
+        #[unsafe(method_id(displayName))]
+        #[unsafe(method_family = none)]
+        fn display_name(&self) -> Retained<NSString> {
+            NSString::from_str(&self.ivars().display_name.borrow())
+        }
+
+        #[unsafe(method_id(defaultDraftName))]
+        #[unsafe(method_family = none)]
+        fn default_draft_name(&self) -> Retained<NSString> {
+            NSString::from_str(&self.ivars().suggested_name.borrow())
+        }
+
+        #[unsafe(method_id(dataOfType:error:))]
+        #[unsafe(method_family = none)]
+        fn data_of_type(
+            &self,
+            _type_name: &NSString,
+            error: *mut *mut NSError,
+        ) -> Option<Retained<NSData>> {
+            if !error.is_null() {
+                unsafe {
+                    *error = std::ptr::null_mut();
+                }
+            }
+            Some(NSData::from_vec(
+                self.ivars().content.borrow().as_bytes().to_vec(),
+            ))
+        }
+
+        #[unsafe(method(prepareSavePanel:))]
+        fn prepare_save_panel(&self, save_panel: &NSSavePanel) -> bool {
+            let locale = self.ivars().locale.get();
+            save_panel.setPrompt(Some(&NSString::from_str(tr(locale, "save"))));
+            save_panel.setCanCreateDirectories(true);
+            save_panel.setShowsTagField(true);
+            save_panel.setExtensionHidden(false);
+
+            let default_path = self.ivars().default_path.borrow().clone();
+            let fallback_name = self.ivars().suggested_name.borrow().clone();
+            configure_macos_document_save_panel(
+                save_panel,
+                default_path.as_deref(),
+                &fallback_name,
+            );
+            true
+        }
+
+        #[unsafe(method(autosavesInPlace))]
+        fn autosaves_in_place() -> bool {
+            false
+        }
+
+        #[unsafe(method_id(readableTypes))]
+        #[unsafe(method_family = none)]
+        fn readable_types() -> Retained<NSArray<NSString>> {
+            macos_document_type_names()
+        }
+
+        #[unsafe(method_id(writableTypes))]
+        #[unsafe(method_family = none)]
+        fn writable_types() -> Retained<NSArray<NSString>> {
+            macos_document_type_names()
+        }
+
+        #[unsafe(method(isNativeType:))]
+        fn is_native_type(type_name: &NSString) -> bool {
+            let value = type_name.to_string();
+            value == "net.daringfireball.markdown" || value == "public.plain-text"
+        }
+
+        #[unsafe(method_id(writableTypesForSaveOperation:))]
+        #[unsafe(method_family = none)]
+        fn writable_types_for_save_operation(
+            &self,
+            _save_operation: NSSaveOperationType,
+        ) -> Retained<NSArray<NSString>> {
+            macos_document_type_names()
+        }
+    }
+
+    unsafe impl NSObjectProtocol for TypeFreeCloseDocument {}
+);
+
+#[cfg(target_os = "macos")]
+impl TypeFreeCloseDocument {
+    fn sync_editor_state(&self, payload: &DocumentStatePayload, locale: AppLocale) {
+        let display_name = close_sheet_display_name(&payload.file_name, locale);
+        let suggested_name = close_sheet_suggested_name(&payload.file_name, locale);
+        let default_path = payload
+            .file_path
+            .clone()
+            .or_else(|| Some(suggested_name.clone()));
+
+        self.ivars().content.replace(payload.content.clone());
+        self.ivars().display_name.replace(display_name);
+        self.ivars().suggested_name.replace(suggested_name);
+        self.ivars().default_path.replace(default_path);
+        self.ivars().locale.set(locale);
+
+        let file_type =
+            NSString::from_str(macos_document_type_for_path(payload.file_path.as_deref()));
+        self.setFileType(Some(&file_type));
+
+        match payload
+            .file_path
+            .as_deref()
+            .filter(|path| Path::new(path).is_absolute())
+        {
+            Some(path) => {
+                let url = NSURL::fileURLWithPath_isDirectory(&NSString::from_str(path), false);
+                self.setFileURL(Some(&url));
+            }
+            None => self.setFileURL(None),
+        }
+
+        if payload.dirty {
+            if !self.isDocumentEdited() {
+                self.updateChangeCount(NSDocumentChangeType::ChangeDone);
+            }
+        } else if self.isDocumentEdited() {
+            self.updateChangeCount(NSDocumentChangeType::ChangeCleared);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[name = "TypeFreeCloseDelegate"]
+    #[thread_kind = MainThreadOnly]
+    struct TypeFreeCloseDelegate;
+
+    impl TypeFreeCloseDelegate {
+        #[unsafe(method(document:shouldClose:contextInfo:))]
+        fn document_should_close(
+            &self,
+            document: &NSDocument,
+            should_close: bool,
+            context_info: *mut std::ffi::c_void,
+        ) {
+            let context = unsafe { Box::from_raw(context_info.cast::<MacosCloseContext>()) };
+            if let Ok(mut pending) = MACOS_PENDING_CLOSES.lock() {
+                pending.remove(&context.window_label);
+            }
+            MACOS_DOCUMENT_BRIDGES.with(|bridges| {
+                bridges.borrow_mut().remove(&context.window_label);
+            });
+
+            if !should_close {
+                return;
+            }
+
+            if let Ok(mut allowed) = MACOS_ALLOWED_CLOSES.lock() {
+                allowed.insert(context.window_label.clone());
+            }
+
+            if let Some(file_path) = document
+                .fileURL()
+                .and_then(|url| url.path())
+                .map(|path| path.to_string())
+            {
+                let _ = add_recent_document(&context.app, &file_path);
+            }
+
+            if let Some(window) = context.app.get_webview_window(&context.window_label) {
+                if let Err(error) = window.close() {
+                    eprintln!("failed to close Tauri window after macOS close sheet: {error}");
+                    document.close();
+                }
+            } else {
+                document.close();
+            }
+        }
+    }
+
+    unsafe impl NSObjectProtocol for TypeFreeCloseDelegate {}
+);
+
+#[cfg(target_os = "macos")]
+fn macos_document_type_names() -> Retained<NSArray<NSString>> {
+    NSArray::from_retained_slice(&[
+        NSString::from_str("net.daringfireball.markdown"),
+        NSString::from_str("public.plain-text"),
+    ])
+}
+
+#[cfg(target_os = "macos")]
+fn macos_document_type_for_path(path: Option<&str>) -> &'static str {
+    match path
+        .and_then(|value| Path::new(value).extension())
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("txt") => "public.plain-text",
+        _ => "net.daringfireball.markdown",
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn close_sheet_display_name(file_name: &str, locale: AppLocale) -> String {
+    let fallback = tr(locale, "untitled").to_string();
+    let normalized = file_name.trim();
+    if normalized.is_empty() {
+        return fallback;
+    }
+
+    Path::new(normalized)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| normalized.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn close_sheet_suggested_name(file_name: &str, locale: AppLocale) -> String {
+    let normalized = file_name.trim();
+    if normalized.is_empty() {
+        return format!("{}.md", tr(locale, "untitled"));
+    }
+    normalized.to_string()
+}
+
+#[cfg(target_os = "macos")]
+fn configure_macos_document_save_panel(
+    panel: &NSSavePanel,
+    default_path: Option<&str>,
+    fallback_name: &str,
+) {
+    let combined_name = match default_path
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+    {
+        Some(path) if path.is_absolute() => {
+            if let Some(parent) = path.parent().and_then(|value| value.to_str()) {
+                let url = NSURL::fileURLWithPath_isDirectory(&NSString::from_str(parent), true);
+                panel.setDirectoryURL(Some(&url));
+            }
+
+            path.file_name()
+                .and_then(|value| value.to_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| fallback_name.to_string())
+        }
+        Some(path) => path.to_string_lossy().to_string(),
+        None => fallback_name.to_string(),
+    };
+
+    panel.setNameFieldStringValue(&NSString::from_str(&combined_name));
+}
+
+#[cfg(target_os = "macos")]
+fn macos_close_delegate(mtm: MainThreadMarker) -> Retained<TypeFreeCloseDelegate> {
+    MACOS_CLOSE_DELEGATE.with(|delegate| {
+        if delegate.borrow().is_none() {
+            let created: Retained<TypeFreeCloseDelegate> =
+                unsafe { msg_send![TypeFreeCloseDelegate::alloc(mtm), init] };
+            *delegate.borrow_mut() = Some(created);
+        }
+
+        delegate
+            .borrow()
+            .as_ref()
+            .expect("macOS close delegate should be initialized")
+            .clone()
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn sync_macos_document_state(
+    window: &WebviewWindow,
+    payload: DocumentStatePayload,
+    locale: AppLocale,
+) -> Result<(), String> {
+    let label = window.label().to_string();
+    let ns_window_ptr = window.ns_window().map_err(|error| error.to_string())? as usize;
+    let (tx, rx) = sync_channel(1);
+
+    window
+        .run_on_main_thread(move || {
+            let result = (|| -> Result<(), String> {
+                let mtm = MainThreadMarker::new()
+                    .ok_or_else(|| "Missing main thread marker".to_string())?;
+                MACOS_DOCUMENT_BRIDGES.with(|bridges| {
+                    let mut bridges = bridges.borrow_mut();
+                    let bridge = bridges.entry(label).or_insert_with(|| {
+                        let ns_window = unsafe {
+                            &*((ns_window_ptr as *mut std::ffi::c_void).cast::<NSWindow>())
+                        };
+                        let document: Retained<TypeFreeCloseDocument> =
+                            unsafe { msg_send![TypeFreeCloseDocument::alloc(mtm), init] };
+                        let window_controller = NSWindowController::initWithWindow(
+                            NSWindowController::alloc(mtm),
+                            Some(ns_window),
+                        );
+                        document.addWindowController(&window_controller);
+                        document.setWindow(Some(ns_window));
+                        NSDocumentController::sharedDocumentController(mtm).addDocument(&document);
+                        MacosDocumentBridge {
+                            document,
+                            window_controller,
+                        }
+                    });
+
+                    bridge.document.sync_editor_state(&payload, locale);
+                    bridge
+                        .window_controller
+                        .synchronizeWindowTitleWithDocumentName();
+                });
+                Ok(())
+            })();
+
+            let _ = tx.send(result);
+        })
+        .map_err(|error| error.to_string())?;
+
+    rx.recv().map_err(|error| error.to_string())?
+}
+
+#[cfg(target_os = "macos")]
+fn begin_macos_close_flow(
+    window: &WebviewWindow,
+    payload: DocumentStatePayload,
+    locale: AppLocale,
+) -> Result<(), String> {
+    let label = window.label().to_string();
+    let already_pending = match MACOS_PENDING_CLOSES.lock() {
+        Ok(mut pending) => {
+            if pending.contains(&label) {
+                true
+            } else {
+                pending.insert(label.clone());
+                false
+            }
+        }
+        Err(_) => true,
+    };
+    if already_pending {
+        return Ok(());
+    }
+
+    sync_macos_document_state(window, payload, locale)?;
+
+    let app = window.app_handle().clone();
+    let close_label = label.clone();
+    let (tx, rx) = sync_channel(1);
+    window
+        .run_on_main_thread(move || {
+            let result = (|| -> Result<(), String> {
+                let mtm = MainThreadMarker::new()
+                    .ok_or_else(|| "Missing main thread marker".to_string())?;
+                MACOS_DOCUMENT_BRIDGES.with(|bridges| {
+                    let bridges = bridges.borrow();
+                    let bridge = bridges
+                        .get(&close_label)
+                        .ok_or_else(|| "Missing macOS document bridge".to_string())?;
+                    let delegate = macos_close_delegate(mtm);
+                    let context = Box::into_raw(Box::new(MacosCloseContext {
+                        app,
+                        window_label: close_label.clone(),
+                    }));
+                    let delegate_object: &AnyObject = delegate.as_ref();
+                    unsafe {
+                        bridge
+                            .document
+                            .canCloseDocumentWithDelegate_shouldCloseSelector_contextInfo(
+                                delegate_object,
+                                Some(sel!(document:shouldClose:contextInfo:)),
+                                context.cast(),
+                            );
+                    }
+                    Ok(())
+                })
+            })();
+
+            let _ = tx.send(result);
+        })
+        .map_err(|error| error.to_string())?;
+
+    match rx.recv().map_err(|error| error.to_string())? {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            if let Ok(mut pending) = MACOS_PENDING_CLOSES.lock() {
+                pending.remove(&label);
+            }
+            Err(error)
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn is_macos_allowed_close(label: &str) -> bool {
+    MACOS_ALLOWED_CLOSES
+        .lock()
+        .map(|allowed| allowed.contains(label))
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+fn remove_macos_document_bridge(label: String) {
+    if let Ok(mut pending) = MACOS_PENDING_CLOSES.lock() {
+        pending.remove(&label);
+    }
+    if let Ok(mut allowed) = MACOS_ALLOWED_CLOSES.lock() {
+        allowed.remove(&label);
+    }
+    MACOS_DOCUMENT_BRIDGES.with(|bridges| {
+        bridges.borrow_mut().remove(&label);
+    });
 }
 
 fn normalize_locale(value: &str) -> AppLocale {
@@ -196,6 +699,7 @@ fn tr(locale: AppLocale, key: &str) -> &'static str {
             "cancel" => "Cancel",
             "close" => "Close",
             "clearRecent" => "Clear Recent",
+            "confirmDiscardChanges" => "Current changes are not saved. Continue and discard them?",
             "copy" => "Copy",
             "cut" => "Cut",
             "dark" => "Dark",
@@ -251,6 +755,7 @@ fn tr(locale: AppLocale, key: &str) -> &'static str {
             "cancel" => "取消",
             "close" => "关闭",
             "clearRecent" => "清除最近文件",
+            "confirmDiscardChanges" => "当前修改尚未保存。仍要继续并丢弃这些修改吗？",
             "copy" => "复制",
             "cut" => "剪切",
             "dark" => "深色",
@@ -306,6 +811,7 @@ fn tr(locale: AppLocale, key: &str) -> &'static str {
             "cancel" => "キャンセル",
             "close" => "閉じる",
             "clearRecent" => "最近使った項目を消去",
+            "confirmDiscardChanges" => "現在の変更は保存されていません。破棄して続行しますか？",
             "copy" => "コピー",
             "cut" => "切り取り",
             "dark" => "ダーク",
@@ -426,6 +932,166 @@ fn save_document_to_path(content: &str, path: &Path) -> Result<SavedDocument, St
     Ok(SavedDocument {
         file_path: path.to_string_lossy().to_string(),
         name: file_name_from_path(path),
+    })
+}
+
+fn show_save_dialog(
+    window: &WebviewWindow,
+    locale: AppLocale,
+    default_path: Option<&str>,
+    title: Option<&str>,
+) -> Result<Option<PathBuf>, String> {
+    let mut dialog = add_text_filters(window.dialog().file(), locale).set_parent(window);
+    if let Some(title) = title.filter(|value| !value.trim().is_empty()) {
+        dialog = dialog.set_title(title);
+    }
+    dialog = apply_default_path(dialog, default_path);
+    dialog
+        .blocking_save_file()
+        .map(file_path_to_path_buf)
+        .transpose()
+}
+
+#[cfg(target_os = "macos")]
+fn configure_macos_close_save_panel(
+    panel: &NSSavePanel,
+    locale: AppLocale,
+    default_path: Option<&str>,
+    file_name: &str,
+) {
+    let save_label = tr(locale, "save");
+
+    let _ = file_name;
+    panel.setPrompt(Some(&NSString::from_str(save_label)));
+    panel.setCanCreateDirectories(true);
+    panel.setShowsTagField(true);
+    panel.setExtensionHidden(false);
+
+    #[allow(deprecated)]
+    panel.setAllowedFileTypes(Some(&NSArray::from_retained_slice(&[
+        NSString::from_str("md"),
+        NSString::from_str("markdown"),
+        NSString::from_str("mdown"),
+        NSString::from_str("mkd"),
+        NSString::from_str("txt"),
+    ])));
+
+    let combined_name = match default_path
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+    {
+        Some(path) if path.is_absolute() => {
+            if let Some(parent) = path.parent() {
+                if let Some(parent_str) = parent.to_str() {
+                    let url =
+                        NSURL::fileURLWithPath_isDirectory(&NSString::from_str(parent_str), true);
+                    panel.setDirectoryURL(Some(&url));
+                }
+            }
+
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| file_name.to_string())
+        }
+        Some(path) => path.to_string_lossy().to_string(),
+        None => file_name.to_string(),
+    };
+
+    panel.setNameFieldStringValue(&NSString::from_str(&combined_name));
+}
+
+#[cfg(target_os = "macos")]
+fn show_macos_close_save_panel(
+    window: &WebviewWindow,
+    locale: AppLocale,
+    default_path: Option<&str>,
+    file_name: &str,
+) -> Result<Option<PathBuf>, String> {
+    let ns_window_ptr = window.ns_window().map_err(|error| error.to_string())? as usize;
+    let default_path = default_path.map(str::to_string);
+    let file_name = file_name.to_string();
+    let (tx, rx) = sync_channel(1);
+
+    window
+        .run_on_main_thread(move || {
+            let result = (|| -> Result<Option<PathBuf>, String> {
+                let mtm = MainThreadMarker::new()
+                    .ok_or_else(|| "Missing main thread marker".to_string())?;
+                let panel = NSSavePanel::savePanel(mtm);
+                configure_macos_close_save_panel(
+                    &panel,
+                    locale,
+                    default_path.as_deref(),
+                    &file_name,
+                );
+
+                let ns_window =
+                    unsafe { &*((ns_window_ptr as *mut std::ffi::c_void).cast::<NSWindow>()) };
+                let completion = StackBlock::new(|_: isize| {});
+
+                panel.beginSheetModalForWindow_completionHandler(ns_window, &completion);
+
+                let response = panel.runModal();
+                if response == NSModalResponseOK {
+                    let path = panel
+                        .URL()
+                        .and_then(|url| url.path())
+                        .map(|path| PathBuf::from(path.to_string()));
+                    Ok(path)
+                } else if response == NSModalResponseCancel {
+                    Ok(None)
+                } else {
+                    Err("Close save panel failed to complete".to_string())
+                }
+            })();
+
+            let _ = tx.send(result);
+        })
+        .map_err(|error| error.to_string())?;
+
+    rx.recv().map_err(|error| error.to_string())?
+}
+
+fn save_file_with_options(
+    window: &WebviewWindow,
+    payload: SaveFilePayload,
+    locale: AppLocale,
+    dialog_title: Option<&str>,
+) -> Result<SaveFileResult, String> {
+    let app = window.app_handle().clone();
+    let save_as = payload.save_as.unwrap_or(false);
+    let mut target_path = payload
+        .file_path
+        .as_ref()
+        .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from);
+
+    if target_path.is_none() || save_as {
+        let selected = show_save_dialog(
+            window,
+            locale,
+            payload.default_path.as_deref(),
+            dialog_title,
+        )?;
+        let Some(selected) = selected else {
+            return Ok(SaveFileResult {
+                canceled: true,
+                file_path: None,
+                name: None,
+            });
+        };
+        target_path = Some(selected);
+    }
+
+    let target_path = target_path.ok_or_else(|| "Missing target file path".to_string())?;
+    let saved = save_document_to_path(&payload.content, &target_path)?;
+    add_recent_document(&app, &saved.file_path)?;
+
+    Ok(SaveFileResult {
+        canceled: false,
+        file_path: Some(saved.file_path),
+        name: Some(saved.name),
     })
 }
 
@@ -559,10 +1225,6 @@ fn clear_recent_documents(app: &AppHandle) -> Result<(), String> {
 
     persist_recent_documents(app, &[])?;
     rebuild_menu(app).map_err(|error| error.to_string())
-}
-
-fn tr_prompt(locale: AppLocale, key: &str, file_name: &str) -> String {
-    tr(locale, key).replace("{fileName}", file_name)
 }
 
 fn emit_menu_action(app: &AppHandle, action: &str, payload: Option<Value>) {
@@ -824,6 +1486,11 @@ fn handle_window_event(window: &Window, event: &WindowEvent) {
     match event {
         WindowEvent::CloseRequested { api, .. } => {
             let label = window.label().to_string();
+            #[cfg(target_os = "macos")]
+            if is_macos_allowed_close(&label) {
+                return;
+            }
+
             let should_prevent_close = {
                 let state = window.app_handle().state::<Mutex<AppState>>();
                 let state = state.lock().expect("app state mutex poisoned");
@@ -834,9 +1501,30 @@ fn handle_window_event(window: &Window, event: &WindowEvent) {
                     .map(|document| document.dirty)
                     .unwrap_or(false)
             };
-
             if should_prevent_close {
                 api.prevent_close();
+
+                #[cfg(target_os = "macos")]
+                {
+                    let payload = {
+                        let state = window.app_handle().state::<Mutex<AppState>>();
+                        let state = state.lock().expect("app state mutex poisoned");
+                        state.documents.get(&label).cloned()
+                    };
+                    let locale = {
+                        let state = window.app_handle().state::<Mutex<AppState>>();
+                        let state = state.lock().expect("app state mutex poisoned");
+                        state.ui.locale
+                    };
+
+                    if let (Some(webview), Some(payload)) =
+                        (window.app_handle().get_webview_window(&label), payload)
+                    {
+                        if let Err(error) = begin_macos_close_flow(&webview, payload, locale) {
+                            eprintln!("failed to start macOS close flow: {error}");
+                        }
+                    }
+                }
             };
         }
         WindowEvent::Destroyed => {
@@ -848,6 +1536,14 @@ fn handle_window_event(window: &Window, event: &WindowEvent) {
                 }
                 Err(error) => eprintln!("failed to lock app state: {error}"),
             };
+
+            #[cfg(target_os = "macos")]
+            {
+                let cleanup_label = label.clone();
+                let _ = window.run_on_main_thread(move || {
+                    remove_macos_document_bridge(cleanup_label);
+                });
+            }
         }
         WindowEvent::ThemeChanged(theme) => {
             let payload = match format!("{theme:?}").to_lowercase().as_str() {
@@ -896,43 +1592,12 @@ async fn save_file(
     window: WebviewWindow,
     payload: SaveFilePayload,
 ) -> Result<SaveFileResult, String> {
-    let app = window.app_handle().clone();
     let locale = {
-        let state = app.state::<Mutex<AppState>>();
+        let state = window.app_handle().state::<Mutex<AppState>>();
         let state = state.lock().map_err(|error| error.to_string())?;
         state.ui.locale
     };
-
-    let save_as = payload.save_as.unwrap_or(false);
-    let mut target_path = payload
-        .file_path
-        .as_ref()
-        .filter(|path| !path.trim().is_empty())
-        .map(PathBuf::from);
-
-    if target_path.is_none() || save_as {
-        let dialog = add_text_filters(window.dialog().file(), locale);
-        let dialog = apply_default_path(dialog, payload.default_path.as_deref());
-        let selected = dialog.blocking_save_file();
-        let Some(selected) = selected else {
-            return Ok(SaveFileResult {
-                canceled: true,
-                file_path: None,
-                name: None,
-            });
-        };
-        target_path = Some(file_path_to_path_buf(selected)?);
-    }
-
-    let target_path = target_path.ok_or_else(|| "Missing target file path".to_string())?;
-    let saved = save_document_to_path(&payload.content, &target_path)?;
-    add_recent_document(&app, &saved.file_path)?;
-
-    Ok(SaveFileResult {
-        canceled: false,
-        file_path: Some(saved.file_path),
-        name: Some(saved.name),
-    })
+    save_file_with_options(&window, payload, locale, None)
 }
 
 #[tauri::command]
@@ -966,7 +1631,7 @@ async fn confirm_close(
     window: WebviewWindow,
     state: State<'_, Mutex<AppState>>,
     payload: ConfirmClosePayload,
-) -> Result<String, String> {
+) -> Result<ConfirmCloseResult, String> {
     let locale = {
         let state = state.lock().map_err(|error| error.to_string())?;
         state.ui.locale
@@ -974,13 +1639,75 @@ async fn confirm_close(
     let file_name = if payload.file_name.trim().is_empty() {
         tr(locale, "untitled").to_string()
     } else {
-        payload.file_name
+        payload.file_name.clone()
     };
-    let save_label = tr(locale, "save").to_string();
     let dont_save_label = tr(locale, "dontSave").to_string();
     let cancel_label = tr(locale, "cancel").to_string();
+    let confirm_discard_message = tr(locale, "confirmDiscardChanges").to_string();
+    let default_path = payload
+        .default_path
+        .clone()
+        .or_else(|| Some(file_name.clone()));
 
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(target_path) =
+            show_macos_close_save_panel(&window, locale, default_path.as_deref(), &file_name)?
+        {
+            let saved = save_document_to_path(&payload.content, &target_path)?;
+            add_recent_document(&window.app_handle(), &saved.file_path)?;
+            return Ok(ConfirmCloseResult {
+                action: "save".to_string(),
+                file_path: Some(saved.file_path),
+                name: Some(saved.name),
+            });
+        }
+
+        let (tx, mut rx) = tauri::async_runtime::channel(1);
+        window
+            .dialog()
+            .message(confirm_discard_message)
+            .parent(&window)
+            .title(APP_NAME)
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                dont_save_label.clone(),
+                cancel_label.clone(),
+            ))
+            .show_with_result(move |result| {
+                let _ = tx.try_send(result);
+            });
+
+        let result = rx
+            .recv()
+            .await
+            .ok_or_else(|| "Close confirmation dialog was dismissed unexpectedly".to_string())?;
+
+        return Ok(ConfirmCloseResult {
+            action: match result {
+                MessageDialogResult::Custom(value) if value == dont_save_label => {
+                    "discard".to_string()
+                }
+                MessageDialogResult::Ok => "discard".to_string(),
+                _ => "cancel".to_string(),
+            },
+            file_path: None,
+            name: None,
+        });
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    let save_label = tr(locale, "save").to_string();
+    #[cfg(not(target_os = "macos"))]
+    let file_path = payload
+        .file_path
+        .as_ref()
+        .filter(|path| !path.trim().is_empty())
+        .cloned();
+
+    #[cfg(not(target_os = "macos"))]
     let (tx, mut rx) = tauri::async_runtime::channel(1);
+    #[cfg(not(target_os = "macos"))]
     window
         .dialog()
         .message(tr_prompt(locale, "savePromptMessage", &file_name))
@@ -996,19 +1723,83 @@ async fn confirm_close(
             let _ = tx.try_send(result);
         });
 
+    #[cfg(not(target_os = "macos"))]
     let result = rx
         .recv()
         .await
         .ok_or_else(|| "Close confirmation dialog was dismissed unexpectedly".to_string())?;
-    let decision = match result {
-        MessageDialogResult::Custom(value) if value == save_label => "save",
-        MessageDialogResult::Custom(value) if value == dont_save_label => "discard",
-        MessageDialogResult::Yes => "save",
-        MessageDialogResult::No => "discard",
-        _ => "cancel",
-    };
+    #[cfg(not(target_os = "macos"))]
+    match result {
+        MessageDialogResult::Custom(value) if value == save_label => {
+            let save_result = save_file_with_options(
+                &window,
+                SaveFilePayload {
+                    content: payload.content,
+                    default_path,
+                    file_path,
+                    save_as: Some(false),
+                },
+                locale,
+                Some(tr_prompt(locale, "savePromptMessage", &file_name).as_str()),
+            )?;
 
-    Ok(decision.to_string())
+            if save_result.canceled {
+                return Ok(ConfirmCloseResult {
+                    action: "cancel".to_string(),
+                    file_path: None,
+                    name: None,
+                });
+            }
+
+            Ok(ConfirmCloseResult {
+                action: "save".to_string(),
+                file_path: save_result.file_path,
+                name: save_result.name,
+            })
+        }
+        MessageDialogResult::Custom(value) if value == dont_save_label => Ok(ConfirmCloseResult {
+            action: "discard".to_string(),
+            file_path: None,
+            name: None,
+        }),
+        MessageDialogResult::Yes => {
+            let save_result = save_file_with_options(
+                &window,
+                SaveFilePayload {
+                    content: payload.content,
+                    default_path,
+                    file_path,
+                    save_as: Some(false),
+                },
+                locale,
+                Some(tr_prompt(locale, "savePromptMessage", &file_name).as_str()),
+            )?;
+
+            if save_result.canceled {
+                return Ok(ConfirmCloseResult {
+                    action: "cancel".to_string(),
+                    file_path: None,
+                    name: None,
+                });
+            }
+
+            Ok(ConfirmCloseResult {
+                action: "save".to_string(),
+                file_path: save_result.file_path,
+                name: save_result.name,
+            })
+        }
+        MessageDialogResult::No => Ok(ConfirmCloseResult {
+            action: "discard".to_string(),
+            file_path: None,
+            name: None,
+        }),
+        _ => Ok(ConfirmCloseResult {
+            action: "cancel".to_string(),
+            file_path: None,
+            name: None,
+        }),
+    }
 }
 
 #[tauri::command]
@@ -1026,8 +1817,8 @@ fn update_document_state(
 
     {
         let mut state = state.lock().map_err(|error| error.to_string())?;
-        state.documents.insert(label, payload);
-    }
+        state.documents.insert(label, payload.clone());
+    };
 
     let _ = window.set_title(&title);
     Ok(())

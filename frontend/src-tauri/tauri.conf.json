@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "TypeFree",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "identifier": "com.hill.typefree",
   "build": {
     "frontendDist": "../dist",
@@ -30,11 +30,42 @@
   },
   "bundle": {
     "active": true,
+    "fileAssociations": [
+      {
+        "ext": [
+          "md",
+          "markdown",
+          "mdown",
+          "mkd"
+        ],
+        "name": "Markdown",
+        "role": "Editor",
+        "mimeType": "text/markdown",
+        "exportedType": {
+          "identifier": "net.daringfireball.markdown",
+          "conformsTo": [
+            "public.plain-text"
+          ]
+        }
+      },
+      {
+        "ext": [
+          "txt"
+        ],
+        "name": "Plain Text",
+        "role": "Editor",
+        "contentTypes": [
+          "public.plain-text"
+        ],
+        "mimeType": "text/plain"
+      }
+    ],
     "targets": [
       "app",
       "dmg"
     ],
     "macOS": {
+      "infoPlist": "Info.plist",
       "signingIdentity": "-"
     },
     "icon": [

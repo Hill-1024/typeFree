@@ -36,10 +36,19 @@ interface TypefreeCloseRequestEvent {
 }
 
 interface TypefreeCloseConfirmPayload {
+  content: string;
+  defaultPath?: string;
   fileName: string;
+  filePath?: string;
 }
 
 type TypefreeCloseDecision = 'cancel' | 'discard' | 'save';
+
+interface TypefreeCloseConfirmResult {
+  action: TypefreeCloseDecision;
+  filePath?: string;
+  name?: string;
+}
 
 interface TypefreeOpenDocumentPayload {
   content: string;
@@ -91,7 +100,7 @@ interface TypefreeDesktopAPI {
   getSystemTheme: () => 'light' | 'dark';
   openFile: () => Promise<TypefreeOpenFileResult>;
   closeWindow: () => Promise<void>;
-  confirmClose: (payload: TypefreeCloseConfirmPayload) => Promise<TypefreeCloseDecision>;
+  confirmClose: (payload: TypefreeCloseConfirmPayload) => Promise<TypefreeCloseConfirmResult>;
   renameFile: (payload: TypefreeRenameFilePayload) => Promise<TypefreeRenameFileResult>;
   saveFile: (payload: TypefreeSaveFilePayload) => Promise<TypefreeSaveFileResult>;
   updateDocumentState: (payload: TypefreeDocumentStatePayload) => void;

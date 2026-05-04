@@ -96,6 +96,7 @@ const TopbarActionButton = ({
 
 export default function App() {
   const isDesktopApp = Boolean(window.typefreeDesktop?.isDesktop);
+  const useNativeMacCloseFlow = isDesktopApp && /mac/i.test(navigator.userAgent);
   const [locale, setLocale] = useState<AppLocale>(() => getStoredLocale());
   const [mode, setMode] = useState<ViewMode>('wysiwyg');
   const [rawContent, setRawContent] = useState<string>(INITIAL_CONTENT);
@@ -124,7 +125,6 @@ export default function App() {
   const titleSelectOnFocusRef = useRef(false);
   const pendingBlockSelectAllRef = useRef<{ blockId: string | null; timestamp: number }>({ blockId: null, timestamp: 0 });
   const closeRequestActiveRef = useRef(false);
-
   const blocksRef = useRef<BlockData[]>([]);
   const blocks = useMemo(() => {
     const newBlocks = rawToBlocks(rawContent, blocksRef.current);
@@ -475,6 +475,10 @@ export default function App() {
   }, [currentFileName, currentFilePath, defaultFileName, filePickerTypes, rawContent, saveToBrowserHandle, translate]);
 
   useEffect(() => {
+    if (useNativeMacCloseFlow) {
+      return;
+    }
+
     if (!window.typefreeDesktop?.onCloseRequest) {
       return;
     }
@@ -494,26 +498,30 @@ export default function App() {
       void (async () => {
         try {
           const decision = await window.typefreeDesktop?.confirmClose({
-            fileName: currentFileName || defaultFileName
+            content: rawContent,
+            defaultPath: currentFilePath ?? (currentFileName || defaultFileName),
+            fileName: currentFileName || defaultFileName,
+            filePath: currentFilePath ?? undefined
           });
 
-          if (decision === 'discard') {
+          if (decision?.action === 'discard') {
             await window.typefreeDesktop?.closeWindow();
             return;
           }
 
-          if (decision === 'save') {
-            const saved = await handleSaveFile();
-            if (saved) {
-              await window.typefreeDesktop?.closeWindow();
-            }
+          if (decision?.action === 'save') {
+            setLastSavedContent(rawContent);
+            setCurrentFilePath(decision.filePath ?? currentFilePath ?? null);
+            setCurrentFileName(decision.name || currentFileName || defaultFileName);
+            browserFileHandleRef.current = null;
+            await window.typefreeDesktop?.closeWindow();
           }
         } finally {
           closeRequestActiveRef.current = false;
         }
       })();
     });
-  }, [currentFileName, defaultFileName, handleSaveFile, isDirty]);
+  }, [currentFileName, currentFilePath, defaultFileName, isDirty, rawContent, useNativeMacCloseFlow]);
 
   const beginTitleRename = useCallback(() => {
     titleSelectOnFocusRef.current = true;
