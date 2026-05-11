@@ -233,4 +233,4 @@ Good contribution areas include:
 
 ## License
 
-This repository does not include a LICENSE file yet. Add a clear open-source license before formal reuse, redistribution, or contribution.
+The frontend package metadata currently declares the MIT License in [frontend/package.json](./frontend/package.json). The repository still needs a complete top-level LICENSE file so formal reuse, redistribution, and contributions have clear license text.
